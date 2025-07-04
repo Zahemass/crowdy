@@ -1,0 +1,111 @@
+📦 Tables & Buckets
+
+- Table: spots
+  - id (UUID)
+  - latitude (float)
+  - longitude (float)
+  - audio_url (text)
+  - caption (text)  -- starts as null
+  - original_language (text)
+  - translated_captions (jsonb) -- { "ta": "...", "en": "..." }
+  - created_by (jsonb) -- { uid, name, photo_url }
+  - created_at (timestamp)
+  - listen_count (int)
+
+- Table: users
+  - uid (UUID / text)
+  - name (text)
+  - preferred_language (text)
+  - created_at (timestamp)
+
+- Table: badges (optional)
+  - uid (FK to users.uid)
+  - badges (text[]) -- ["First Story"]
+  - last_updated (timestamp)
+
+- Supabase Storage Bucket: audio_files
+  - /spot_abc123.m4a
++-------------------+
+|                   |
+|    Flutter App    |
+|                   |
++-------------------+
+          |
+          | Record audio story
+          V
++-------------------+
+|                   |
+| Upload to         |
+| Supabase Storage  |
+|  (audio_files)    |
++-------------------+
+          |
+          | Create row in 'spots'
+          | table with audio_url,
+          | location, caption=null
+          V
++------------------------------+
+|                              |
+|  Supabase DB (spots table)   |
+|                              |
+| {                            |
+|   audio_url: "...",          |
+|   caption: null,             |
+|   original_language: "ta"    |
+| }                            |
++------------------------------+
+          |
+          | (poll or trigger)
+          V
++-------------------------------+
+|                               |
+|    Node.js server / cron      |
+|                               |
+| - Fetch new rows where        |
+|   caption IS NULL             |
+| - Download audio from Storage |
+| - Run Google STT              |
+| - Detect language             |
+| - Update caption + language   |
+|   in 'spots' row              |
++-------------------------------+
+          |
+          | Supabase row updated
+          V
++------------------------------+
+|                              |
+|  Supabase DB (updated row)   |
+| {                            |
+|   caption: "Best chai",      |
+|   original_language: "en"    |
+| }                            |
++------------------------------+
+          |
+          | When user views
+          V
++---------------------------+
+|                           |
+|  Flutter loads pin        |
+|                           |
+| - Shows caption           |
+| - Offers TTS:             |
+|    • Play original        |
+|    • Play translated      |
++---------------------------+
+          |
+          | Calls Supabase Edge
+          | Function: /translate
+          V
++-----------------------------+
+|                             |
+| Supabase Edge Function API  |
+|  -> Google Translate API    |
+|  -> Returns translated text |
++-----------------------------+
+          |
+          V
++----------------------------+
+|                            |
+|  flutter_tts plays text in |
+|  target language           |
++----------------------------+

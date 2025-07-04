@@ -1,0 +1,180 @@
+DB structureFirestore
+|
+|-- spots (collection)
+|    |-- spot_abc123 (doc)
+|    |    |-- latitude: 12.97
+|    |    |-- longitude: 77.59
+|    |    |-- videoUrl: "https://..."
+|    |    |-- thumbnailUrl: "https://..."
+|    |    |-- caption: "Best Dosa in town"
+|    |    |-- transcript: "Hidden shop near MG road..."
+|    |    |-- originalLanguage: "en"
+|    |    |-- translatedCaptions: { "ta": "...", "hi": "..." }
+|    |    |-- categories: ["food", "hidden_gems"]
+|    |    |-- createdBy: { uid, name, }
+|    |    |-- createdAt: timestamp
+|    |    |-- listenCount: 17
+|    |    |-- likeCount: 5
+|
+|-- users (collection)
+|    |-- user_abc (doc)
+|    |    |-- uid: "user_abc"
+|    |    |-- name: "Zubair"
+|    |    |-- preferredLanguage: "ta"
+|    |    |-- createdAt: timestamp
+|
+|-- badges (collection)  // optional
+|    |-- user_abc (doc)
+|    |    |-- badges: ["First Story"]
+|    |    |-- lastUpdated: timestamp
+
+flow charts:
++-------------------+
+|                   |
+|    Flutter App    |
+|                   |
++-------------------+
+          |
+          | Record short video story
+          | Choose categories: food, hidden place, history
+          V
++-------------------+
+|                   |
+|  Upload video to  |
+| Firebase Storage  |
+|                   |
++-------------------+
+          |
+          | Create Firestore doc
+          | with videoUrl,
+          | location, categories,
+          | caption=null
+          V
++--------------------------+
+|                          |
+|   Firestore (spots)      |
+|                          |
+| {                        |
+|   videoUrl: "...",       |
+|   categories: ["food"],  |
+|   caption: null,         |
+|   originalLanguage: null |
+| }                        |
++--------------------------+
+          |
+          | (trigger or poll)
+          V
++-------------------------------+
+|                               |
+|    Node.js server / cron      |
+|                               |
+| - Finds new spots with        |
+|   caption=null                |
+| - Downloads video file        |
+| - Runs FFmpeg to extract audio|
+| - Speech-to-Text (Google)     |
+| - Saves transcript as caption |
+|   back to Firestore           |
++-------------------------------+
+          |
+          | Firestore doc updated
+          V
++--------------------------+
+|                          |
+| Firestore (updated doc)  |
+| {                        |
+|   videoUrl: "...",       |
+|   caption: "Best chai",  |
+|   categories: ["food"],  |
+|   originalLanguage: "en" |
+| }                        |
++--------------------------+
+          |
+          | When user views
+          V
++--------------------------+
+|                          |
+|   Flutter loads pin      |
+|   by category filter     |
+| - Plays video preview    |
+| - Shows caption          |
+| - Offers TTS:            |
+|    • Play original lang  |
+|    • Play in selected    |
+|      language (via trans)|
++--------------------------+
+          |
+          | Calls Node API
+          | for translation
+          V
++----------------------------+
+|                            |
+| Node.js /translate API     |
+| -> calls Google Translate  |
+| -> returns translated text |
++----------------------------+
+          |
+          V
++--------------------------+
+|                          |
+|   Flutter uses flutter_tts|
+|   to speak in target lang |
++--------------------------+
+
+
+✅ 🎯 UPDATED LEGEND FOR VIDEO FLOW
+✅ Flutter
+
+Records short videos (15–30 sec local story)
+
+Uploads to Firebase Storage
+
+Creates Firestore doc with videoUrl
+
+Plays video in story popups
+
+Runs flutter_tts to speak translations.
+
+✅ Firebase Storage
+
+Stores raw video files (mp4).
+
+✅ Firestore
+
+Stores metadata:
+
+videoUrl
+
+caption (from speech transcription)
+
+originalLanguage
+
+translatedCaptions
+
+✅ Node.js server
+
+Periodically scans Firestore for caption: null
+
+Downloads video from Storage
+
+Runs FFmpeg to extract audio
+
+Sends audio to Google Speech-to-Text for transcript
+
+Updates Firestore doc with caption & detected language
+
+Exposes /translate endpoint for on-demand multi-language support.
+
+✅ FFmpeg
+
+Converts video ➔ audio .wav for transcription.
+
+✅ Google APIs
+
+Speech-to-Text: audio ➔ text
+
+Translate: text ➔ other languages.
+
+✅ flutter_tts
+
+Reads translated text out loud in user’s selected language.

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Test /spots upload</title>
+  <style>
+    body { font-family: sans-serif; max-width: 540px; margin: 2rem auto; }
+    label { display: block; margin-top: 1rem; }
+    input, textarea, button { width: 100%; padding: 0.5rem; }
+    button { margin-top: 1.5rem; }
+    #msg { margin-top: 2rem; white-space: pre-wrap; font-family: monospace; }
+  </style>
+</head>
+<body>
+  <h1>Upload a Spot</h1>
+
+  <form id="spotForm">
+    <label>
+      Spot Name
+      <input name="spotname" required />
+    </label>
+
+    <label>
+      Latitude
+      <input name="latitude" type="number" step="any" required />
+    </label>
+
+    <label>
+      Longitude
+      <input name="longitude" type="number" step="any" required />
+    </label>
+
+    <label>
+      Caption (optional)
+      <textarea name="caption" rows="2"></textarea>
+    </label>
+
+    <label>
+      Audio file (.m4a, .mp3…)
+      <input name="audio" type="file" accept="audio/*" required />
+    </label>
+
+    <label>
+      Image file (.jpg, .png…)
+      <input name="image" type="file" accept="image/*" required />
+    </label>
+
+    <button type="submit">Send to /spots</button>
+  </form>
+
+  <div id="msg"></div>
+
+  <script>
+    const form = document.getElementById('spotForm');
+    const msg  = document.getElementById('msg');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msg.textContent = 'Uploading…';
+
+      try {
+        const formData = new FormData(form);
+
+        const res = await fetch('http://localhost:4000/spots', {
+          method: 'POST',
+          body: formData
+          // If your API expects an auth header, add it here:
+          // headers: { 'Authorization': 'Bearer <your‑jwt>' }
+        });
+
+        const txt = await res.text();
+        if (!res.ok) throw new Error(txt);
+
+        msg.textContent = '✅ Success:\n' + txt;
+      } catch (err) {
+        msg.textContent = '❌ Error:\n' + err.message;
+      }
+    });
+  </script>
+</body>
+</html>
