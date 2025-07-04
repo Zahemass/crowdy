@@ -1,0 +1,15 @@
+// Backend Routes and there functions
+
+
+=> 1.SignUp Route:
+
+   ~ Register the new users with Email, password and a Random Emoji
+   data field that uploads to table
+   [emial, password, profilepic, preferlng]
+
+=> 2. Login Route:
+
+    ~ Get the Email and password from users and auth the users
+    Simple login system with sessions with jwt
+
+=> 
