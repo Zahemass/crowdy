@@ -8,8 +8,10 @@ import multer from "multer";
 import axios from "axios";
 import fs from "fs";
 import path from "path";
-
-import Anime_Test from "./"
+import FormData from "form-data";
+import fsPromises from "fs/promises"; 
+import os from "os";
+import { Credentials, Translator } from "@translated/lara";
 
 
 dotenv.config();
@@ -81,6 +83,7 @@ app.post(
   }
 );
 
+
 // ----------------Login--Route--------------------
 
 app.post("/login", async (req, res) => {
@@ -112,6 +115,22 @@ app.post("/login", async (req, res) => {
 });
 
 // ----------------Spot-Route--------------------
+// ✅ Lara Translator SDK Initialization
+const LARA_ACCESS_KEY_ID = process.env.LARA_ACCESS_KEY_ID;
+const LARA_ACCESS_KEY_SECRET = process.env.LARA_ACCESS_KEY_SECRET;
+const credentials = new Credentials(LARA_ACCESS_KEY_ID, LARA_ACCESS_KEY_SECRET);
+const lara = new Translator(credentials);
+
+// ✅ Helper function using SDK
+const translateText = async (text, targetLang) => {
+  try {
+    const res = await lara.translate(text, "en-US", targetLang);
+    return res.translation;
+  } catch (err) {
+    console.error(`❌ Lara Translation SDK error for ${targetLang}:`, err.message);
+    throw new Error(`Translation to ${targetLang} failed.`);
+  }
+};
 
 app.post(
   "/spots",
@@ -121,11 +140,10 @@ app.post(
   ]),
   async (req, res) => {
     try {
-      /* 1. basic validation */
-      if (!req.files?.audio || !req.files?.image)
-        return res.status(400).json({ error: "audio and image required" });
+      if (!req.files?.audio || !req.files?.image) {
+        return res.status(400).json({ error: "Audio and image are required." });
+      }
 
-      /* 2. upload files to Storage buckets */
       const audioFile = req.files.audio[0];
       const imageFile = req.files.image[0];
 
@@ -137,13 +155,13 @@ app.post(
         .upload(audioPath, audioFile.buffer, {
           contentType: audioFile.mimetype,
         });
+
       await supabase.storage
         .from("spotimages")
         .upload(imagePath, imageFile.buffer, {
           contentType: imageFile.mimetype,
         });
 
-      /* 3. get public URLs (bucket must be public) */
       const { publicUrl: audio_url } = supabase.storage
         .from("audiofiles")
         .getPublicUrl(audioPath).data;
@@ -151,33 +169,86 @@ app.post(
         .from("spotimages")
         .getPublicUrl(imagePath).data;
 
-      /* 4. insert row into spots table */
-      const { spotname, latitude, longitude, caption = "" } = req.body;
+      const { spotname, latitude, longitude } = req.body;
+      const lat = parseFloat(latitude);
+      const lng = parseFloat(longitude);
+
+      if (isNaN(lat) || isNaN(lng)) {
+        return res.status(400).json({ error: "Latitude and longitude must be numbers" });
+      }
+
+      // STEP 1: Transcribe audio
+      const whisperForm = new FormData();
+      whisperForm.append("audio", audioFile.buffer, {
+        filename: "audio.mp3",
+        contentType: audioFile.mimetype || "audio/mpeg",
+      });
+
+      const whisperRes = await axios.post(
+        "http://127.0.0.1:5002/transcribe",
+        whisperForm,
+        { headers: whisperForm.getHeaders() }
+      );
+
+      const transcription = whisperRes.data.text?.trim() || "";
+      console.log("📝 Transcription:", transcription);
+
+      // STEP 2: Translate to multiple languages using Lara SDK
+      const translatedCaptions = {
+        fr: await translateText(transcription, "fr-FR"),
+        de: await translateText(transcription, "de-DE"),
+        hi: await translateText(transcription, "hi-IN"),
+      };
+
+      const summary = "Quick summary: " + transcription.split(" ").slice(0, 6).join(" ") + "...";
+
+      // STEP 3: Insert into Supabase
+      const insertPayload = {
+        spotname: spotname?.trim() || "Unnamed Spot",
+        latitude: lat,
+        longitude: lng,
+        original_language: "en",
+        audio_url,
+        image,
+        caption: transcription,
+        transcription,
+        translated_captions: translatedCaptions,
+        summary,
+        likes_count: 0,
+      };
+
       const { data, error } = await supabase
         .from("spots")
-        .insert([
-          {
-            spotname,
-            latitude: Number(latitude),
-            longitude: Number(longitude),
-            caption,
-            original_language: "EN",
-            audio_url,
-            image,
-            likes_count: 0,
-          },
-        ])
+        .insert([insertPayload])
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        return res.status(400).json({
+          error: {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          },
+        });
+      }
+
       res.status(201).json(data);
     } catch (err) {
-      console.error(err);
+      console.error("❌ Spot Upload Error:", err.message);
       res.status(500).json({ error: err.message });
     }
   }
 );
+
+
+
+
+
+
+
+
 // ----------------Badges-Update-Route--------------------
 
 app.post("/badges-update", (req, res) => {});
