@@ -9,7 +9,7 @@ import axios from "axios";
 import fs from "fs";
 import path from "path";
 
-import Anime_Test from "./"
+// import Anime_Test from "./"
 
 
 dotenv.config();
@@ -36,12 +36,12 @@ app.post(
 
     try {
       // Call the Python emoji generation server
-      // const emojiResponse = await axios.get(
-      //   "http://localhost:5000/generate-emoji",
-      //   {
-      //     params: { prompt: "cat Woman" },
-      //   }
-      // );
+      const emojiResponse = await axios.get(
+        "http://localhost:5000/generate-emoji",
+        {
+          params: { prompt: "cat Woman" },
+        }
+      );
       const emojiPath = "";
       console.log(emojiPath);
 
@@ -180,9 +180,18 @@ app.post(
 );
 // ----------------Badges-Update-Route--------------------
 
-app.post("/badges-update", (req, res) => {});
+app.post("/badges-update", (req, res) => {
+  
+});
 
 // ----------------Audio-Upload-Route--------------------
+
+
+
+
+
+
+
 
 // ----------------Server-Kick-Start--------------------
 
