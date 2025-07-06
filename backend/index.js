@@ -11,6 +11,7 @@ import path from "path";
 import FormData from "form-data";
 import fsPromises from "fs/promises"; 
 import os from "os";
+import { execSync } from "child_process"; 
 import { Credentials, Translator } from "@translated/lara";
 
 
@@ -29,59 +30,73 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 app.post(
   "/signup",
-  upload.fields([
-    { name: "audio", maxCount: 1 },
-    { name: "image", maxCount: 1 },
-  ]),
+  upload.none(), // since you are not actually uploading 'audio' or 'image' here
   async (req, res) => {
     const { username, password } = req.body;
 
-    try {
-      // Call the Python emoji generation server
-      // const emojiResponse = await axios.get(
-      //   "http://localhost:5000/generate-emoji",
-      //   {
-      //     params: { prompt: "cat Woman" },
-      //   }
-      // );
-      const emojiPath = "";
-      console.log(emojiPath);
+    console.log("📥 Received:", req.body);
 
-      // Upload to Supabase storage
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username & password are required" });
+    }
+
+    try {
+      // ✅ Prepare data
+      const preferlng = "EN";
+      const hash = await bcrypt.hash(password, 12);
+
+      // ✅ Generate emoji via Python
+      const prompt = "happy local foodie cartoon emoji";
+      const emojiPath = execSync(`python genmoji.py "${prompt}"`).toString().trim();
+      console.log("✅ Generated emoji at:", emojiPath);
+
+      // ✅ Upload to Supabase Storage
       const emojiFile = fs.readFileSync(emojiPath);
       const imagePath = `profilepics/${Date.now()}_${username}.png`;
+
       const { error: uploadError } = await supabase
+        .storage
         .from("profilepics")
-        .upload(imagePath, emojiFile, {
-          contentType: "image/png",
-        });
+        .upload(imagePath, emojiFile, { contentType: "image/png" });
 
       if (uploadError) throw uploadError;
 
-      // Get public URL
-      const { publicUrl: profilepic } = supabase.storage
+      // ✅ Get public URL
+      const { publicUrl: profilepic } = supabase
+        .storage
         .from("profilepics")
         .getPublicUrl(imagePath).data;
 
-      // Delete the temporary file
+      console.log("✅ Uploaded to Supabase:", profilepic);
+
+      // ✅ Clean up local file
       await fs.promises.unlink(emojiPath);
 
-      // Create user with the generated emoji
-      const preferlng = "EN";
-      const hash = await bcrypt.hash(password, 12);
-      const { data, error } = await supabase
+      // ✅ Insert into DB
+      const { data, error: dbError } = await supabase
         .from("users")
         .insert([{ username, password: hash, profilepic, preferlng }])
         .select();
 
-      if (error) return res.status(400).json({ error: error.message });
-      res.json(data[0]);
-    } catch (error) {
-      console.error("Signup error:", error);
-      res.status(500).json({ error: "Failed to generate profile picture" });
+      if (dbError) {
+        console.error("❌ DB Insert error:", dbError);
+        return res.status(400).json({ error: dbError.message });
+      }
+
+      console.log("🚀 Insert result:", data);
+
+      return res.status(200).json({
+        message: "Signup successful",
+        user: data[0],
+      });
+
+    } catch (err) {
+      console.error("Signup error:", err);
+      return res.status(500).json({ error: "Internal Server Error" });
     }
   }
 );
+
 
 
 // ----------------Login--Route--------------------
