@@ -12,13 +12,28 @@ import FormData from "form-data";
 import fsPromises from "fs/promises"; 
 import os from "os";
 import { execSync } from "child_process"; 
+import OpenAI from "openai";
 import { Credentials, Translator } from "@translated/lara";
+
+
+
+
 
 
 dotenv.config();
 
+
+
 const app = express();
 app.use(express.json());
+
+//for openai
+//const openai = new OpenAI({
+//  apiKey: process.env.OPENAI_API_KEY
+//});
+
+//Assembly API
+const ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY;
 
 //import cors for flutter web
 import cors from "cors";
@@ -257,7 +272,99 @@ app.post(
   }
 );
 
+// --------------Audio title suggestion-----------------
 
+app.post("/audiotitle", upload.single("audio"), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: "Audio file is required." });
+    }
+
+    console.log("🎧 Received audio file:", req.file.originalname);
+
+    // 1️⃣ Upload audio file to AssemblyAI's upload endpoint
+    console.log("⬆️ Uploading to AssemblyAI...");
+    const uploadRes = await axios.post(
+      "https://api.assemblyai.com/v2/upload",
+      req.file.buffer,
+      {
+        headers: {
+          authorization: ASSEMBLYAI_API_KEY,
+          "content-type": "application/octet-stream",
+        },
+      }
+    );
+
+    const audioUrl = uploadRes.data.upload_url;
+    console.log("✅ Uploaded. Audio URL:", audioUrl);
+
+    // 2️⃣ Start transcription request with auto_chapters (for title / summary)
+    console.log("📝 Starting transcription...");
+    const transcriptRes = await axios.post(
+      "https://api.assemblyai.com/v2/transcript",
+      {
+        audio_url: audioUrl,
+        auto_chapters: true, // enables title / summary generation
+      },
+      {
+        headers: {
+          authorization: ASSEMBLYAI_API_KEY,
+          "content-type": "application/json",
+        },
+      }
+    );
+
+    const transcriptId = transcriptRes.data.id;
+    console.log("🚀 Transcription job started. ID:", transcriptId);
+
+    // 3️⃣ Poll for completion
+    let transcript;
+    while (true) {
+      const pollRes = await axios.get(
+        `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
+        {
+          headers: { authorization: ASSEMBLYAI_API_KEY },
+        }
+      );
+
+      if (pollRes.data.status === "completed") {
+        transcript = pollRes.data;
+        console.log("✅ Transcription completed.");
+        break;
+      } else if (pollRes.data.status === "error") {
+        console.error("❌ Transcription failed:", pollRes.data.error);
+        return res.status(500).json({ error: "Transcription failed", details: pollRes.data.error });
+      }
+
+      console.log("⏳ Waiting for transcription to complete...");
+      await new Promise(resolve => setTimeout(resolve, 3000)); // wait 3s
+    }
+
+    // 4️⃣ Build your response
+    const text = transcript.text;
+    let title = "No title generated";
+    let summary = "No summary available";
+
+    if (transcript.chapters && transcript.chapters.length > 0) {
+      title = transcript.chapters[0].headline || title;
+      summary = transcript.chapters[0].summary || summary;
+    }
+
+    res.json({
+      transcription: text,
+      title,
+      summary
+    });
+
+  } catch (err) {
+    console.error("❌ Error:", err);
+    res.status(500).json({ error: "Internal Server Error", details: err.message });
+  }
+});
+
+app.listen(process.env.PORT, () => {
+  console.log(`🚀 Server running on http://localhost:${process.env.PORT}}`);
+});
 
 
 
