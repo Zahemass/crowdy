@@ -180,12 +180,14 @@ app.post(
       const audioPath = `audio/${Date.now()}_${audioFile.originalname}`;
       const imagePath = `images/${Date.now()}_${imageFile.originalname}`;
 
+      // Upload audio to Supabase
       await supabase.storage
         .from("audiofiles")
         .upload(audioPath, audioFile.buffer, {
           contentType: audioFile.mimetype,
         });
 
+      // Upload image to Supabase
       await supabase.storage
         .from("spotimages")
         .upload(imagePath, imageFile.buffer, {
@@ -195,11 +197,13 @@ app.post(
       const { publicUrl: audio_url } = supabase.storage
         .from("audiofiles")
         .getPublicUrl(audioPath).data;
+
       const { publicUrl: image } = supabase.storage
         .from("spotimages")
         .getPublicUrl(imagePath).data;
 
-      const { spotname, latitude, longitude } = req.body;
+      // ✅ Get extra fields
+      const { spotname, category, description, latitude, longitude } = req.body;
       const lat = parseFloat(latitude);
       const lng = parseFloat(longitude);
 
@@ -221,27 +225,62 @@ app.post(
       );
 
       const transcription = whisperRes.data.text?.trim() || "";
+      const detectedLang = whisperRes.data.language || "en";
       console.log("📝 Transcription:", transcription);
+      console.log("🌐 Detected Language:", detectedLang);
 
-      // STEP 2: Translate to multiple languages using Lara SDK
+      // STEP 2: Translate into English (if needed)
+      let transcriptionInEnglish = transcription;
+      if (detectedLang !== "en") {
+        transcriptionInEnglish = await translateText(transcription, "en");
+      }
+
+      // STEP 3: Translate into other languages
       const translatedCaptions = {
-        fr: await translateText(transcription, "fr-FR"),
-        de: await translateText(transcription, "de-DE"),
-        hi: await translateText(transcription, "hi-IN"),
+        en: transcriptionInEnglish,
+        fr: detectedLang === "fr" ? transcription : await translateText(transcription, "fr-FR"),
+        de: detectedLang === "de" ? transcription : await translateText(transcription, "de-DE"),
+        hi: detectedLang === "hi" ? transcription : await translateText(transcription, "hi-IN"),
       };
 
-      const summary = "Quick summary: " + transcription.split(" ").slice(0, 6).join(" ") + "...";
+      // STEP 4: Create summary from transcription
+      const summary = await new Promise((resolve, reject) => {
+        const python = spawn("python", ["summarizer.py"]);
+        let output = "";
+        let error = "";
 
-      // STEP 3: Insert into Supabase
+        python.stdout.on("data", (data) => (output += data.toString()));
+        python.stderr.on("data", (err) => (error += err.toString()));
+
+        python.on("close", (code) => {
+          if (code !== 0 || error) {
+            console.error("❌ Python Summary Error:", error);
+            return reject(new Error("Summary generation failed"));
+          }
+          try {
+            const parsed = JSON.parse(output);
+            resolve(parsed.summary_text);
+          } catch (e) {
+            reject(e);
+          }
+        });
+
+        python.stdin.write(transcriptionInEnglish);
+        python.stdin.end();
+      });
+
+      // STEP 5: Insert into Supabase
       const insertPayload = {
         spotname: spotname?.trim() || "Unnamed Spot",
+        category: category?.trim() || "General",           // ✅ Category
+        description: description?.trim() || "",            // ✅ Description
         latitude: lat,
         longitude: lng,
-        original_language: "en",
+        original_language: detectedLang,
         audio_url,
         image,
         caption: transcription,
-        transcription,
+        transcription: transcriptionInEnglish,
         translated_captions: translatedCaptions,
         summary,
         likes_count: 0,
@@ -271,6 +310,7 @@ app.post(
     }
   }
 );
+
 
 // --------------Audio title suggestion-----------------
 
@@ -363,7 +403,6 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
     res.status(500).json({ error: "Internal Server Error", details: err.message });
   }
 });
-
 
 
 // ----------------Badges-Update-Route--------------------
