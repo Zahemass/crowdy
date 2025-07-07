@@ -364,14 +364,6 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
   }
 });
 
-app.listen(process.env.PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${process.env.PORT}`);
-});
-
-
-
-
-
 
 
 // ----------------Badges-Update-Route--------------------
