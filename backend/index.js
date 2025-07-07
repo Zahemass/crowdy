@@ -282,14 +282,14 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
 
     console.log("🎧 Received audio file:", req.file.originalname);
 
-    // 1️⃣ Upload audio file to AssemblyAI's upload endpoint
+    // 1️⃣ Upload to AssemblyAI
     console.log("⬆️ Uploading to AssemblyAI...");
     const uploadRes = await axios.post(
       "https://api.assemblyai.com/v2/upload",
       req.file.buffer,
       {
         headers: {
-          authorization: ASSEMBLYAI_API_KEY,
+          authorization: process.env.ASSEMBLYAI_API_KEY,
           "content-type": "application/octet-stream",
         },
       }
@@ -298,17 +298,17 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
     const audioUrl = uploadRes.data.upload_url;
     console.log("✅ Uploaded. Audio URL:", audioUrl);
 
-    // 2️⃣ Start transcription request with auto_chapters (for title / summary)
+    // 2️⃣ Start transcription with auto_chapters
     console.log("📝 Starting transcription...");
     const transcriptRes = await axios.post(
       "https://api.assemblyai.com/v2/transcript",
       {
         audio_url: audioUrl,
-        auto_chapters: true, // enables title / summary generation
+        auto_chapters: true,
       },
       {
         headers: {
-          authorization: ASSEMBLYAI_API_KEY,
+          authorization: process.env.ASSEMBLYAI_API_KEY,
           "content-type": "application/json",
         },
       }
@@ -323,7 +323,7 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
       const pollRes = await axios.get(
         `https://api.assemblyai.com/v2/transcript/${transcriptId}`,
         {
-          headers: { authorization: ASSEMBLYAI_API_KEY },
+          headers: { authorization: process.env.ASSEMBLYAI_API_KEY },
         }
       );
 
@@ -340,20 +340,22 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
       await new Promise(resolve => setTimeout(resolve, 3000)); // wait 3s
     }
 
-    // 4️⃣ Build your response
-    const text = transcript.text;
-    let title = "No title generated";
-    let summary = "No summary available";
+  
+    // 4️⃣ Extract title and build 2-line description
+    const title = transcript.chapters?.[0]?.headline || "No title generated";
 
-    if (transcript.chapters && transcript.chapters.length > 0) {
-      title = transcript.chapters[0].headline || title;
-      summary = transcript.chapters[0].summary || summary;
+    let description = transcript.chapters?.[0]?.summary || "No short description available";
+
+  // ✂️ Trim to only first 2 sentences
+     const sentences = description.split('.').filter(Boolean);
+     description = sentences.slice(0, 2).join('. ').trim();
+     if (description && !description.endsWith('.')) {
+     description += '.';
     }
 
     res.json({
-      transcription: text,
       title,
-      summary
+      description
     });
 
   } catch (err) {
@@ -363,8 +365,9 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
 });
 
 app.listen(process.env.PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${process.env.PORT}}`);
+  console.log(`🚀 Server running on http://localhost:${process.env.PORT}`);
 });
+
 
 
 
