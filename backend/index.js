@@ -34,6 +34,7 @@ app.use(express.json());
 
 //Assembly API
 const ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY;
+let globalSummary = null;
 
 //import cors for flutter web
 import cors from "cors";
@@ -170,7 +171,12 @@ app.post(
   ]),
   async (req, res) => {
     try {
+      console.log("🧾 Incoming spot upload...");
+      console.log("📂 Uploaded files:", req.files);
+      console.log("📝 Fields:", req.body);
+
       if (!req.files?.audio || !req.files?.image) {
+        console.log("❌ Missing audio or image file:", req.files);
         return res.status(400).json({ error: "Audio and image are required." });
       }
 
@@ -180,19 +186,31 @@ app.post(
       const audioPath = `audio/${Date.now()}_${audioFile.originalname}`;
       const imagePath = `images/${Date.now()}_${imageFile.originalname}`;
 
-      // Upload audio to Supabase
-      await supabase.storage
-        .from("audiofiles")
-        .upload(audioPath, audioFile.buffer, {
-          contentType: audioFile.mimetype,
-        });
+      let audioUploadRes, imageUploadRes;
 
-      // Upload image to Supabase
-      await supabase.storage
-        .from("spotimages")
-        .upload(imagePath, imageFile.buffer, {
-          contentType: imageFile.mimetype,
-        });
+      try {
+        audioUploadRes = await supabase.storage
+          .from("audiofiles")
+          .upload(audioPath, audioFile.buffer, {
+            contentType: audioFile.mimetype,
+          });
+        console.log("✅ Audio uploaded:", audioUploadRes);
+      } catch (err) {
+        console.error("❌ Audio upload failed:", err.message);
+        return res.status(500).json({ error: "Audio upload failed", details: err.message });
+      }
+
+      try {
+        imageUploadRes = await supabase.storage
+          .from("spotimages")
+          .upload(imagePath, imageFile.buffer, {
+            contentType: imageFile.mimetype,
+          });
+        console.log("✅ Image uploaded:", imageUploadRes);
+      } catch (err) {
+        console.error("❌ Image upload failed:", err.message);
+        return res.status(500).json({ error: "Image upload failed", details: err.message });
+      }
 
       const { publicUrl: audio_url } = supabase.storage
         .from("audiofiles")
@@ -202,7 +220,6 @@ app.post(
         .from("spotimages")
         .getPublicUrl(imagePath).data;
 
-      // ✅ Get extra fields
       const { spotname, category, description, latitude, longitude } = req.body;
       const lat = parseFloat(latitude);
       const lng = parseFloat(longitude);
@@ -211,7 +228,7 @@ app.post(
         return res.status(400).json({ error: "Latitude and longitude must be numbers" });
       }
 
-      // STEP 1: Transcribe audio
+      // STEP 1: Transcribe audio using Whisper
       const whisperForm = new FormData();
       whisperForm.append("audio", audioFile.buffer, {
         filename: "audio.mp3",
@@ -229,8 +246,9 @@ app.post(
       console.log("📝 Transcription:", transcription);
       console.log("🌐 Detected Language:", detectedLang);
 
-      // STEP 2: Translate into English (if needed)
-      let transcriptionInEnglish = transcription;
+      // 📴 TEMPORARILY DISABLED TRANSLATION (re-enable when ready)
+      
+     let transcriptionInEnglish = transcription;
       if (detectedLang !== "en") {
         transcriptionInEnglish = await translateText(transcription, "en");
       }
@@ -243,44 +261,23 @@ app.post(
         hi: detectedLang === "hi" ? transcription : await translateText(transcription, "hi-IN"),
       };
 
-      // STEP 4: Create summary from transcription
-      const summary = await new Promise((resolve, reject) => {
-        const python = spawn("python", ["summarizer.py"]);
-        let output = "";
-        let error = "";
 
-        python.stdout.on("data", (data) => (output += data.toString()));
-        python.stderr.on("data", (err) => (error += err.toString()));
+      // STEP 2: Use summary from earlier step
+      const summary = globalSummary || "No summary available.";
+      globalSummary = null;
 
-        python.on("close", (code) => {
-          if (code !== 0 || error) {
-            console.error("❌ Python Summary Error:", error);
-            return reject(new Error("Summary generation failed"));
-          }
-          try {
-            const parsed = JSON.parse(output);
-            resolve(parsed.summary_text);
-          } catch (e) {
-            reject(e);
-          }
-        });
-
-        python.stdin.write(transcriptionInEnglish);
-        python.stdin.end();
-      });
-
-      // STEP 5: Insert into Supabase
+      // STEP 3: Insert into Supabase
       const insertPayload = {
         spotname: spotname?.trim() || "Unnamed Spot",
-        category: category?.trim() || "General",           // ✅ Category
-        description: description?.trim() || "",            // ✅ Description
+        category: category?.trim() || "General",
+        description: description?.trim() || "",
         latitude: lat,
         longitude: lng,
         original_language: detectedLang,
         audio_url,
         image,
         caption: transcription,
-        transcription: transcriptionInEnglish,
+        transcription: transcription, // fallback
         translated_captions: translatedCaptions,
         summary,
         likes_count: 0,
@@ -293,6 +290,7 @@ app.post(
         .single();
 
       if (error) {
+        console.error("❌ DB Insert Error:", error);
         return res.status(400).json({
           error: {
             message: error.message,
@@ -303,6 +301,7 @@ app.post(
         });
       }
 
+      console.log("✅ Spot uploaded successfully:", data);
       res.status(201).json(data);
     } catch (err) {
       console.error("❌ Spot Upload Error:", err.message);
@@ -310,6 +309,7 @@ app.post(
     }
   }
 );
+
 
 
 // --------------Audio title suggestion-----------------
@@ -385,6 +385,10 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
     const title = transcript.chapters?.[0]?.headline || "No title generated";
 
     let description = transcript.chapters?.[0]?.summary || "No short description available";
+
+    const summary = transcript.summary || description;
+    globalSummary = summary;
+    console.log(globalSummary);
 
   // ✂️ Trim to only first 2 sentences
      const sentences = description.split('.').filter(Boolean);
