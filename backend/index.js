@@ -408,6 +408,39 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
   }
 });
 
+// ----------------GET-REQUESTS-------------------------
+
+app.get("/nearby", async (req, res) => {
+  /* 1️⃣  read query params */
+  const userLat = Number(req.body.lat);
+  const userLng = Number(req.body.lng);
+
+  if (Number.isNaN(userLat) || Number.isNaN(userLng)) {
+    return res.status(400).json({ error: "lat & lng query params are required numbers" });
+  }
+
+  /* 2️⃣  fetch the data you need */
+  const { data: spots, error } = await supabase
+    .from("spots")
+    .select("spotname, latitude, longitude, category");
+
+  if (error) return res.status(500).json({ error: error.message });
+
+  /* 3️⃣  compute distance + filter ≤3 km + sort */
+  const result = spots
+    .map(s => ({
+      ...s,
+      distance: distanceMeters(userLat, userLng, s.latitude, s.longitude)
+    }))
+    .filter(s => s.distance <= 3000)             // within 3 km
+    .sort((a, b) => a.distance - b.distance)     // nearest first
+
+
+
+
+  res.json(result);
+});
+
 
 // ----------------Badges-Update-Route--------------------
 
