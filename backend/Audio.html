@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Full Spot Demo</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 2rem auto; text-align: center; }
+    img   { max-width: 100%; border-radius: 12px; margin-top: 1rem; }
+    audio { width: 100%; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1 id="title">Loading…</h1>
+  <img   id="spotImg"  alt="spot image">
+  <audio id="spotAud" controls></audio>
+
+  <script>
+    // ↙︎ replace with values you want to test
+    const params = new URLSearchParams({
+      username: "Fazil_Plan",
+      lat: 12.9716,
+      lon: 77.5946
+    });
+
+    fetch("http://localhost:4000/fullspot?" + params.toString())
+      .then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then(spot => {
+        document.getElementById("title").textContent = `Spot by ${spot.username}`;
+        document.getElementById("spotImg").src  = spot.image;
+        document.getElementById("spotAud").src  = spot.audio;
+        document.getElementById("spotAud").load();   // refresh audio element
+      })
+      .catch(err => {
+        document.getElementById("title").textContent = "Error: " + err.message;
+      });
+  </script>
+</body>
+</html>
