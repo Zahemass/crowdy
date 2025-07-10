@@ -269,29 +269,29 @@ app.post(
       }
 
       // STEP 1: Transcribe audio
-      // const whisperForm = new FormData();
-      // whisperForm.append("audio", audioFile.buffer, {
-      //   filename: "audio.mp3",
-      //   contentType: audioFile.mimetype || "audio/mpeg",
-      // });
+      const whisperForm = new FormData();
+      whisperForm.append("audio", audioFile.buffer, {
+        filename: "audio.mp3",
+        contentType: audioFile.mimetype || "audio/mpeg",
+      });
 
-      // const whisperRes = await axios.post(
-      //   "http://127.0.0.1:5002/transcribe",
-      //   whisperForm,
-      //   { headers: whisperForm.getHeaders() }
-      // );
+      const whisperRes = await axios.post(
+        "http://127.0.0.1:5002/transcribe",
+        whisperForm,
+        { headers: whisperForm.getHeaders() }
+      );
 
-      // const transcription = whisperRes.data.text?.trim() || "";
-      // console.log("📝 Transcription:", transcription);
+      const transcription = whisperRes.data.text?.trim() || "";
+      console.log("📝 Transcription:", transcription);
 
       // STEP 2: Translate to multiple languages using Lara SDK
-      // const translatedCaptions = {
-      //   fr: await translateText(transcription, "fr-FR"),
-      //   de: await translateText(transcription, "de-DE"),
-      //   hi: await translateText(transcription, "hi-IN"),
-      // };
+      const translatedCaptions = {
+        fr: await translateText(transcription, "fr-FR"),
+        de: await translateText(transcription, "de-DE"),
+        hi: await translateText(transcription, "hi-IN"),
+      };
 
-      // const summary = "Quick summary: " + transcription.split(" ").slice(0, 6).join(" ") + "...";
+      const summary = "Quick summary: " + transcription.split(" ").slice(0, 6).join(" ") + "...";
 
       // STEP 3: Insert into Supabase
       const insertPayload = {
@@ -306,10 +306,10 @@ app.post(
         category: "Food",
         description: "More",
         created_at: new Date().toISOString(),
-        caption: 'transcription',
-        transcription: 'transcription',
-        translated_captions: 'translatedCaptions',
-        summary: 'summary',
+        caption: transcription,
+        transcription: transcription,
+        translated_captions: translatedCaptions,
+        summary,
         likes_count: 0,
       };
 
