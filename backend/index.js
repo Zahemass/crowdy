@@ -368,7 +368,7 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
     );
 
     const transcriptId = transcriptRes.data.id;
-    console.log("🚀 Transcription job started. ID:", transcriptId);
+    console.log("🚀Transcription job started. ID:", transcriptId);
 
     // 3️⃣ Poll for completion
     let transcript;
@@ -441,18 +441,27 @@ app.get("/spotintro", async (req, res) => {
   }
 
   try {
-    const { data: spot, error } = await supabase
+    const { data: spots, error } = await supabase
       .from("spots")
-      .select("category, description, viewcount")
+      .select("spotname, category, description, viewcount")
       .eq("username", username)
-      .eq("latitude", latitude)
-      .eq("longitude", longitude)
-      .single();
+      .gte("latitude", latitude - 0.000001)
+      .lte("latitude", latitude + 0.000001)
+      .gte("longitude", longitude - 0.000001)
+      .lte("longitude", longitude + 0.000001);
 
-    if (error || !spot) {
-      console.error("❌ Spot fetch error:", error?.message || "Spot not found");
+    if (error) {
+      console.error("❌ Supabase error:", error.message);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    if (!spots || spots.length === 0) {
+      console.error("❌ No spot found for query:", { username, latitude, longitude });
       return res.status(404).json({ error: "Spot not found" });
     }
+
+    // Return the first matched spot
+    const spot = spots[0];
 
     return res.status(200).json({
       username,
@@ -461,6 +470,7 @@ app.get("/spotintro", async (req, res) => {
       category: spot.category,
       description: spot.description,
       viewcount: spot.viewcount,
+      spotname: spot.spotname,
     });
   } catch (err) {
     console.error("❌ Internal Server Error:", err.message);
@@ -468,17 +478,17 @@ app.get("/spotintro", async (req, res) => {
   }
 });
 
+
+
 // ----------------full spot-------------------------
 
 app.get("/fullspot", async (req, res) => {
-  // const { username, lat, lon } = req.query;
-  const username = "user4"
-  const lat = 12.968120
-  const lon = 80.138763
+  // Using hardcoded values for testing
+  const { username, lat, lon } = req.query;
 
   if (!username || !lat || !lon) {
     return res.status(400).json({
-      error: "username, lat, and lon query parameters are required"
+      error: "username, lat, and lon query parameters are required",
     });
   }
 
@@ -487,7 +497,7 @@ app.get("/fullspot", async (req, res) => {
 
   if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
     return res.status(400).json({
-      error: "lat and lon must be valid numbers"
+      error: "lat and lon must be valid numbers",
     });
   }
 
@@ -498,14 +508,20 @@ app.get("/fullspot", async (req, res) => {
       .eq("username", username)
       .eq("latitude", latitude)
       .eq("longitude", longitude)
-      .single();
+      .limit(1)
+      .maybeSingle(); // ✅ safer than .single()
 
-    if (error || !spot) {
-      console.error("❌ Spot fetch error:", error?.message || "Spot not found");
+    if (error) {
+      console.error("❌ Supabase error:", error.message);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    if (!spot) {
+      console.error("❌ No spot found for given criteria");
       return res.status(404).json({ error: "Spot not found" });
     }
-    console.log(spot.audio_url)
 
+    console.log("✅ Spot found:", spot.audio_url);
 
     return res.status(200).json({
       username,
@@ -525,7 +541,10 @@ app.get("/fullspot", async (req, res) => {
 app.get("/translation", async (req, res) => {
   const { username, lat, lon, lang } = req.query;
 
+  console.log("🔎 Incoming Query Params:", { username, lat, lon, lang });
+
   if (!username || !lat || !lon || !lang) {
+    console.warn("⚠️ Missing required query parameters");
     return res.status(400).json({
       error: "username, lat, lon, and lang query parameters are required"
     });
@@ -534,40 +553,73 @@ app.get("/translation", async (req, res) => {
   const latitude = parseFloat(lat);
   const longitude = parseFloat(lon);
 
+  console.log(`📌 Parsed lat/lon: ${latitude}, ${longitude}`);
+
   if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
+    console.error("❌ Invalid lat/lon values");
     return res.status(400).json({
       error: "lat and lon must be valid numbers"
     });
   }
 
+  // 🌐 Map language name to language code
+  const langMap = {
+    english: "en",
+    french: "fr",
+    hindi: "hi",
+    german: "de"
+  };
+
+  const langCode = langMap[lang.toLowerCase()];
+  if (!langCode) {
+    console.warn(`⚠️ Unsupported language requested: ${lang}`);
+    return res.status(400).json({ error: `Unsupported language: ${lang}` });
+  }
+
+  console.log(`🌐 Mapped language '${lang}' to code '${langCode}'`);
+
   try {
+    console.log("📡 Querying Supabase...");
+
     const { data: spot, error } = await supabase
       .from("spots")
-      .select("translated_captions")
+      .select("translated_captions, username, latitude, longitude")
       .eq("username", username)
-      .eq("latitude", latitude)
-      .eq("longitude", longitude)
-      .single();
+      // 🔥 Add small tolerance for floating-point comparison
+      .gte("latitude", latitude - 0.00001)
+      .lte("latitude", latitude + 0.00001)
+      .gte("longitude", longitude - 0.00001)
+      .lte("longitude", longitude + 0.00001)
+      .maybeSingle(); // ✅ safer than .single()
 
-    if (error || !spot) {
-      console.error("❌ Spot fetch error:", error?.message || "Spot not found");
+    console.log("📦 Supabase Query Result:", spot);
+
+    if (error) {
+      console.error("❌ Supabase Query Error:", error.message);
+      return res.status(500).json({ error: "Supabase query failed" });
+    }
+
+    if (!spot) {
+      console.warn("⚠️ No spot found for given username/lat/lon");
       return res.status(404).json({ error: "Spot not found" });
     }
 
-    const translation = spot.translated_captions?.[lang];
+    const translation = spot.translated_captions?.[langCode];
 
     if (!translation) {
-      console.warn(`⚠️ Translation for language '${lang}' not found`);
+      console.warn(`⚠️ Translation for language '${langCode}' not found`);
       return res.status(404).json({
-        error: `Translation for language '${lang}' not found`
+        error: `Translation for language '${langCode}' not found`
       });
     }
 
+    console.log("✅ Translation found:", translation);
+
     return res.status(200).json({
-      username,
-      latitude,
-      longitude,
-      language: lang,
+      username: spot.username,
+      latitude: spot.latitude,
+      longitude: spot.longitude,
+      language: langCode,
       translation
     });
   } catch (err) {
@@ -575,6 +627,10 @@ app.get("/translation", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+
+
+
 
 // ----------------return summary-------------------------
 
@@ -597,30 +653,41 @@ app.get("/returnsummary", async (req, res) => {
   }
 
   try {
-    const { data: spot, error } = await supabase
+    const { data: spots, error } = await supabase
       .from("spots")
-      .select("summary")
+      .select("spotname, description, summary")
       .eq("username", username)
-      .eq("latitude", latitude)
-      .eq("longitude", longitude)
-      .single();
+      .gte("latitude", latitude - 0.000001)
+      .lte("latitude", latitude + 0.000001)
+      .gte("longitude", longitude - 0.000001)
+      .lte("longitude", longitude + 0.000001);
 
-    if (error || !spot) {
-      console.error("❌ Spot fetch error:", error?.message || "Spot not found");
+    if (error) {
+      console.error("❌ Supabase error:", error.message);
+      return res.status(500).json({ error: "Database error" });
+    }
+
+    if (!spots || spots.length === 0) {
+      console.error("❌ No spot found for query:", { username, latitude, longitude });
       return res.status(404).json({ error: "Spot not found" });
     }
+
+    const spot = spots[0];
 
     return res.status(200).json({
       username,
       latitude,
       longitude,
-      summary: spot.summary
+      spotname: spot.spotname,
+      description: spot.description,
+      summary: spot.summary,
     });
   } catch (err) {
     console.error("❌ Internal Server Error:", err.message);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
 
 
 
@@ -662,37 +729,33 @@ export function distanceMeters(lat1, lon1, lat2, lon2) {
 // ----------------GET-REQUESTS-------------------------
 
 app.get("/nearby", async (req, res) => {
-  /* 1️⃣  read query params */
-  const userLat = Number(req.body.lat);
-  const userLng = Number(req.body.lng);
+  const userLat = Number(req.query.lat);  // ← fixed
+  const userLng = Number(req.query.lng);  // ← fixed
 
   if (Number.isNaN(userLat) || Number.isNaN(userLng)) {
     return res.status(400).json({ error: "lat & lng query params are required numbers" });
   }
 
-  /* 2️⃣  fetch the data you need */
   const { data: spots, error } = await supabase
-    .from("spots")
-    .select("spotname, latitude, longitude, category");
+  .from("spots")
+  .select("spotname, latitude, longitude, category, username"); // 👈 include username
+
 
   if (error) return res.status(500).json({ error: error.message });
 
-  /* 3️⃣  compute distance + filter ≤3 km + sort */
   const result = spots
     .map(s => ({
       ...s,
       distance: distanceMeters(userLat, userLng, s.latitude, s.longitude)
     }))
-    .filter(s => s.distance <= 3000)             // within 3 km
-    .sort((a, b) => a.distance - b.distance)     // nearest first
-
-
-
-
+    .filter(s => s.distance <= 3000)
+    .sort((a, b) => a.distance - b.distance);
+  console.log(result)
   res.json(result);
 });
 
 
+ 
 
 
 
