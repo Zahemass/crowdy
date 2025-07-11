@@ -118,31 +118,50 @@ app.post(
 
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
+  console.log("🔐 Login attempt:", { username, password });
 
-  const { data: user, error } = await supabase
-    .from("users")
-    .select("*")
-    .eq("username", username)
-    .single();
+  try {
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("username", username)
+      .single();
 
-  if (error || !user) {
-    return res.status(400).json({ error: "Invalid username or password" });
+    if (error) {
+      console.error("❌ Supabase error while fetching user:", error.message);
+    }
+
+    if (!user) {
+      console.warn("⚠️ No user found with username:", username);
+      return res.status(400).json({ error: "Invalid username or password" });
+    }
+
+    console.log("✅ User found:", user.username);
+
+    const passwordMatches = await bcrypt.compare(password, user.password);
+
+    if (!passwordMatches) {
+      console.warn("🔑 Password mismatch for user:", username);
+      return res.status(401).json({ error: "Invalid username or password" });
+    }
+
+    console.log("🔓 Password match confirmed for:", username);
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    console.log("🎫 JWT token generated:", token);
+
+    res.json({ token });
+  } catch (err) {
+    console.error("🔥 Internal error during login:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
   }
-
-  const passwordMatches = await bcrypt.compare(password, user.password);
-
-  if (!passwordMatches) {
-    return res.status(401).json({ error: "Invalid username or password" });
-  }
-
-  const token = jwt.sign(
-    { id: user.id, username: user.username },
-    process.env.JWT_SECRET,
-    { expiresIn: "1h" }
-  );
-
-  res.json({ token });
 });
+
 
 // ----------------Spot-Route--------------------
 // ✅ Lara Translator SDK Initialization
@@ -815,7 +834,7 @@ app.get("/nearby", async (req, res) => {
 });
 
 // ----------------Profile-Return-------------------------
-app.post("/return-profile", async (req, res) => {
+  app.post("/return-profile", async (req, res) => {
   const { username } = req.body;
 
   console.log("🛠 Incoming username:", username);
@@ -829,7 +848,7 @@ app.post("/return-profile", async (req, res) => {
   try {
     const { data: user, error: userErr } = await supabase
       .from("users")
-      .select("postcount")
+      .select("postcount, profilepic") // 👈 SELECT profile_image too
       .ilike("username", cleanUsername)
       .single();
 
@@ -862,13 +881,13 @@ app.post("/return-profile", async (req, res) => {
       .ilike("username", cleanUsername)
       .single();
 
-
     if (badgeErr) {
       return res.status(500).json({ error: "Error fetching badge" });
     }
 
     res.json({
       username: cleanUsername,
+      profile_image: user.profilepic || null, // 👈 Include it in the response
       postcount: user.postcount || 0,
       score: badges.scores || 0,
       uploaded_spots
@@ -879,6 +898,7 @@ app.post("/return-profile", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
 
 // ----------------Server-Kick-Start--------------------
 
