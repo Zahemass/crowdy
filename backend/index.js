@@ -788,6 +788,39 @@ export function distanceMeters(lat1, lon1, lat2, lon2) {
   return 2 * EARTH_RADIUS * Math.asin(Math.sqrt(a));
 }
 
+//-------------profilepicreturn
+
+app.post("/profilepicreturn", async (req, res) => {
+  const { username } = req.body;
+
+  console.log("📥 Incoming username:", username);
+
+  if (!username) {
+    return res.status(400).json({ error: "Username is required" });
+  }
+
+  const cleanUsername = username.trim().toLowerCase();
+
+  try {
+    const { data: user, error: userErr } = await supabase
+      .from("users")
+      .select("profilepic") // You must have this column in your users table
+      .ilike("username", cleanUsername)
+      .single();
+
+    if (userErr || !user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    return res.json({
+      profile_image: user.profilepic || null,
+    });
+
+  } catch (err) {
+    console.error("❌ Server error:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 
 // ----------------GET-REQUESTS-------------------------
@@ -961,6 +994,7 @@ app.post("/search-spots", async (req, res) => {
     console.error("Error:", err.message);
     res.status(500).json({ error: "Internal Server Error" });
   }
+  
 });
 
 // ----------------Server-Kick-Start--------------------
