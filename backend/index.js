@@ -795,6 +795,12 @@ export function distanceMeters(lat1, lon1, lat2, lon2) {
 app.get("/nearby", async (req, res) => {
   const userLat = Number(req.query.lat);  // ← fixed
   const userLng = Number(req.query.lng);  // ← fixed
+  const SelectedCategory =  req.query.SearchQuery;
+  // const { lat,lng, SearchCategry} = req.body;
+  // const userLat = lat
+  // const userLng = lng
+  // const SelectedCategory = SearchCategry;    
+
 
   if (Number.isNaN(userLat) || Number.isNaN(userLng)) {
     return res.status(400).json({ error: "lat & lng query params are required numbers" });
@@ -812,9 +818,10 @@ app.get("/nearby", async (req, res) => {
       ...s,
       distance: distanceMeters(userLat, userLng, s.latitude, s.longitude)
     }))
-    .filter(s => s.distance <= 3000)
+    .filter(s => s.distance <= 3000 && s.category === SelectedCategory)
     .sort((a, b) => a.distance - b.distance);
-  console.log(result)
+  // console.log(result);
+
   res.json(result);
 });
 
