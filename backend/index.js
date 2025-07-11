@@ -118,50 +118,31 @@ app.post(
 
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
-  console.log("🔐 Login attempt:", { username, password });
 
-  try {
-    const { data: user, error } = await supabase
-      .from("users")
-      .select("*")
-      .eq("username", username)
-      .single();
+  const { data: user, error } = await supabase
+    .from("users")
+    .select("*")
+    .eq("username", username)
+    .single();
 
-    if (error) {
-      console.error("❌ Supabase error while fetching user:", error.message);
-    }
-
-    if (!user) {
-      console.warn("⚠️ No user found with username:", username);
-      return res.status(400).json({ error: "Invalid username or password" });
-    }
-
-    console.log("✅ User found:", user.username);
-
-    const passwordMatches = await bcrypt.compare(password, user.password);
-
-    if (!passwordMatches) {
-      console.warn("🔑 Password mismatch for user:", username);
-      return res.status(401).json({ error: "Invalid username or password" });
-    }
-
-    console.log("🔓 Password match confirmed for:", username);
-
-    const token = jwt.sign(
-      { id: user.id, username: user.username },
-      process.env.JWT_SECRET,
-      { expiresIn: "1h" }
-    );
-
-    console.log("🎫 JWT token generated:", token);
-
-    res.json({ token });
-  } catch (err) {
-    console.error("🔥 Internal error during login:", err.message);
-    res.status(500).json({ error: "Internal Server Error" });
+  if (error || !user) {
+    return res.status(400).json({ error: "Invalid username or password" });
   }
-});
 
+  const passwordMatches = await bcrypt.compare(password, user.password);
+
+  if (!passwordMatches) {
+    return res.status(401).json({ error: "Invalid username or password" });
+  }
+
+  const token = jwt.sign(
+    { id: user.id, username: user.username },
+    process.env.JWT_SECRET,
+    { expiresIn: "1h" }
+  );
+
+  res.json({ token });
+});
 
 // ----------------Spot-Route--------------------
 // ✅ Lara Translator SDK Initialization
@@ -562,7 +543,10 @@ export async function ViewCount(lat, lon) {
 
 app.get("/fullspot", async (req, res) => {
   // Using hardcoded values for testing
-  const { username, lat, lon } = req.query;
+  // const { username, lat, lon } = req.body;
+  const username = 'genzyzubair'
+  const lat = '9876543'
+  const lon = '675849039458'
 
   if (!username || !lat || !lon) {
     return res.status(400).json({
@@ -583,7 +567,7 @@ app.get("/fullspot", async (req, res) => {
     ViewCount(latitude,longitude);
     const { data: spot, error } = await supabase
       .from("spots")
-      .select("image, audio_url")
+      .select("spotname, image, audio_url")
       .eq("username", username)
       .eq("latitude", latitude)
       .eq("longitude", longitude)
@@ -608,6 +592,7 @@ app.get("/fullspot", async (req, res) => {
       longitude,
       image: spot.image,
       audio: spot.audio_url,
+      spotname:spot.spotname
     });
   } catch (err) {
     console.error("❌ Internal Server Error:", err.message);
@@ -833,6 +818,7 @@ app.get("/nearby", async (req, res) => {
   res.json(result);
 });
 
+
 // ----------------Profile-Return-------------------------
   app.post("/return-profile", async (req, res) => {
   const { username } = req.body;
@@ -898,7 +884,77 @@ app.get("/nearby", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+// --------------search-query-----------------
 
+const OPENCAGE_API_KEY = process.env.OPENCAGE_API_KEY;
+
+function getBoundingBox(lat, lon, radiusInKm = 2) {
+  const latR = 1 / 110.574;
+  const lonR = 1 / (111.320 * Math.cos(lat * (Math.PI / 180)));
+
+  const latDelta = radiusInKm * latR;
+  const lonDelta = radiusInKm * lonR;
+
+  return {
+    minLat: lat - latDelta,
+    maxLat: lat + latDelta,
+    minLon: lon - lonDelta,
+    maxLon: lon + lonDelta,
+  };
+}
+
+
+
+// Route: /search-spots
+app.post("/search-spots", async (req, res) => {
+  const { SearchQuery } = req.body;
+
+  if (!SearchQuery) {
+    return res.status(400).json({ error: "SearchQuery is required" });
+  }
+
+  try {
+    // 1. Convert query to lat/lon
+    const geoRes = await axios.get("https://api.opencagedata.com/geocode/v1/json", {
+      params: {
+        q: SearchQuery,
+        key: OPENCAGE_API_KEY,
+      },
+    });
+
+    const results = geoRes.data.results;
+    if (!results || results.length === 0) {
+      return res.status(404).json({ error: "Location not found" });
+    }
+
+    const { lat, lng } = results[0].geometry;
+
+    // 2. Calculate bounding box
+    const box = getBoundingBox(lat, lng, 2); // 2km radius
+
+    // 3. Query Supabase spots table within bounding box
+    const { data, error } = await supabase
+      .from("spots")
+      .select("*")
+      .lte("latitude", box.maxLat)
+      .gte("latitude", box.minLat)
+      .lte("longitude", box.maxLon)
+      .gte("longitude", box.minLon);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({
+      location: results[0].formatted,
+      total_spots: data.length,
+      spots: data,
+    });
+  } catch (err) {
+    console.error("Error:", err.message);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
 // ----------------Server-Kick-Start--------------------
 
