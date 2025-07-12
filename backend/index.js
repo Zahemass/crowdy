@@ -352,6 +352,119 @@ app.post(
   }
 );
 
+// ----dummy-route-------
+
+// app.post(
+//   "/spots",
+//   upload.fields([
+//     { name: "audio", maxCount: 1 },
+//     { name: "image", maxCount: 1 },
+//   ]),
+//   async (req, res) => {
+//     try {
+//       if (!req.files?.audio || !req.files?.image) {
+//         return res.status(400).json({ error: "Audio and image are required." });
+//       }
+
+//       const audioFile = req.files.audio[0];
+//       const imageFile = req.files.image[0];
+
+//       const audioPath = `audio/${Date.now()}_${audioFile.originalname}`;
+//       const imagePath = `images/${Date.now()}_${imageFile.originalname}`;
+
+//       // Upload audio to Supabase Storage
+//       await supabase.storage
+//         .from("audiofiles")
+//         .upload(audioPath, audioFile.buffer, {
+//           contentType: audioFile.mimetype,
+//         });
+
+//       // Upload image to Supabase Storage
+//       await supabase.storage
+//         .from("spotimages")
+//         .upload(imagePath, imageFile.buffer, {
+//           contentType: imageFile.mimetype,
+//         });
+
+//       // Get public URLs
+//       const { publicUrl: audio_url } = supabase.storage
+//         .from("audiofiles")
+//         .getPublicUrl(audioPath).data;
+//       const { publicUrl: image } = supabase.storage
+//         .from("spotimages")
+//         .getPublicUrl(imagePath).data;
+
+//       // Extract form data
+//       const {
+//         username,
+//         spotname,
+//         latitude,
+//         longitude,
+//         caption,
+//         transcription,
+//         translated_captions,
+//         summary,
+//         category = "History Whishpers",
+//         description = "More",
+//         original_language = "en",
+//       } = req.body;
+
+//       const lat = parseFloat(latitude);
+//       const lng = parseFloat(longitude);
+
+//       if (isNaN(lat) || isNaN(lng)) {
+//         return res.status(400).json({ error: "Latitude and longitude must be numbers" });
+//       }
+
+//       const insertPayload = {
+//         username,
+//         spotname: spotname?.trim() || "Unnamed Spot",
+//         latitude: lat,
+//         longitude: lng,
+//         original_language,
+//         audio_url,
+//         image,
+//         viewcount: 0,
+//         category,
+//         description,
+//         created_at: new Date().toISOString(),
+//         caption: caption || transcription || "",
+//         transcription: transcription || "",
+//         translated_captions: JSON.parse(translated_captions || "{}"),
+//         summary: summary || "",
+//         likes_count: 0,
+//       };
+
+//       const { data, error } = await supabase
+//         .from("spots")
+//         .insert([insertPayload])
+//         .select()
+//         .single();
+
+//       if (error) {
+//         return res.status(400).json({
+//           error: {
+//             message: error.message,
+//             details: error.details,
+//             hint: error.hint,
+//             code: error.code,
+//           },
+//         });
+//       }
+
+//       res.status(201).json(data);
+//     } catch (err) {
+//       console.error("❌ Spot Upload Error:", err.message);
+//       res.status(500).json({ error: err.message });
+//     }
+//   }
+// );
+
+
+
+// ------end--dummy---route---------------------------
+
+
 // --------------Audio title suggestion-----------------
 
 app.post("/audiotitle", upload.single("audio"), async (req, res) => {
@@ -543,10 +656,10 @@ export async function ViewCount(lat, lon) {
 
 app.get("/fullspot", async (req, res) => {
   // Using hardcoded values for testing
-  // const { username, lat, lon } = req.body;
-  const username = 'genzyzubair'
-  const lat = '9876543'
-  const lon = '675849039458'
+  const { username, lat, lon } = req.query;
+  // const username = 'genzyzubair'
+  // const lat = '9876543'
+  // const lon = '675849039458'
 
   if (!username || !lat || !lon) {
     return res.status(400).json({
@@ -564,10 +677,10 @@ app.get("/fullspot", async (req, res) => {
   }
 
   try {
-    ViewCount(latitude,longitude);
+    ViewCount(latitude, longitude);
     const { data: spot, error } = await supabase
       .from("spots")
-      .select("spotname, image, audio_url")
+      .select("id,spotname, image, audio_url")
       .eq("username", username)
       .eq("latitude", latitude)
       .eq("longitude", longitude)
@@ -587,12 +700,14 @@ app.get("/fullspot", async (req, res) => {
     console.log("✅ Spot found:", spot.audio_url);
 
     return res.status(200).json({
+      id:spot.id,
       username,
       latitude,
       longitude,
       image: spot.image,
       audio: spot.audio_url,
-      spotname:spot.spotname
+      spotname: spot.spotname,
+      script: spot.transcription
     });
   } catch (err) {
     console.error("❌ Internal Server Error:", err.message);
@@ -788,39 +903,6 @@ export function distanceMeters(lat1, lon1, lat2, lon2) {
   return 2 * EARTH_RADIUS * Math.asin(Math.sqrt(a));
 }
 
-//-------------profilepicreturn
-
-app.post("/profilepicreturn", async (req, res) => {
-  const { username } = req.body;
-
-  console.log("📥 Incoming username:", username);
-
-  if (!username) {
-    return res.status(400).json({ error: "Username is required" });
-  }
-
-  const cleanUsername = username.trim().toLowerCase();
-
-  try {
-    const { data: user, error: userErr } = await supabase
-      .from("users")
-      .select("profilepic") // You must have this column in your users table
-      .ilike("username", cleanUsername)
-      .single();
-
-    if (userErr || !user) {
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    return res.json({
-      profile_image: user.profilepic || null,
-    });
-
-  } catch (err) {
-    console.error("❌ Server error:", err.message);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-});
 
 
 // ----------------GET-REQUESTS-------------------------
@@ -828,7 +910,7 @@ app.post("/profilepicreturn", async (req, res) => {
 app.get("/nearby", async (req, res) => {
   const userLat = Number(req.query.lat);  // ← fixed
   const userLng = Number(req.query.lng);  // ← fixed
-  const SelectedCategory =  req.query.SearchQuery;
+  const SelectedCategory = req.query.SearchQuery;
   // const { lat,lng, SearchCategry} = req.body;
   // const userLat = lat
   // const userLng = lng
@@ -860,7 +942,7 @@ app.get("/nearby", async (req, res) => {
 
 
 // ----------------Profile-Return-------------------------
-  app.post("/return-profile", async (req, res) => {
+app.post("/return-profile", async (req, res) => {
   const { username } = req.body;
 
   console.log("🛠 Incoming username:", username);
@@ -990,11 +1072,62 @@ app.post("/search-spots", async (req, res) => {
       total_spots: data.length,
       spots: data,
     });
+    console.log('Spots', data);
   } catch (err) {
     console.error("Error:", err.message);
     res.status(500).json({ error: "Internal Server Error" });
   }
-  
+});
+
+
+
+// -------------------------delete route----------------------
+
+app.delete("/delete-post", async (req, res) => {
+  const id = req.query.id;
+
+  if (!id) {
+    return res.status(400).json({ error: "ID is required" });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from("spot")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ message: "Spot deleted successfully", data });
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
+});
+
+// ------------user-post-------------------
+app.get("/Get-Posts", async (req, res) => {
+  const { username } = req.body;
+
+  if (!username) {
+    return res.status(400).json({ error: "Username is required" });
+  }
+
+  try {
+    const { data: posts, error } = await supabase
+      .from("spots")
+      .select("*")
+      .eq("username", username);
+
+    if (error) {
+      return res.status(500).json({ error: error.message });
+    }
+
+    res.json({ posts });
+  } catch (err) {
+    res.status(500).json({ error: "Server error", details: err.message });
+  }
 });
 
 // ----------------Server-Kick-Start--------------------
