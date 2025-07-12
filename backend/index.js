@@ -969,7 +969,7 @@ app.post("/return-profile", async (req, res) => {
 
     const { data: spots, error: spotErr } = await supabase
       .from("spots")
-      .select("image, spotname, viewcount, likes_count")
+      .select("id, image, spotname, viewcount, likes_count")
       .ilike("username", cleanUsername);
 
     if (spotErr) {
@@ -977,6 +977,7 @@ app.post("/return-profile", async (req, res) => {
     }
 
     const uploaded_spots = spots.map(spot => ({
+      id:spot.id,
       spotimage: spot.image,
       title: spot.spotname,
       viewscount: spot.viewcount,
