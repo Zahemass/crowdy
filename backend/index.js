@@ -1092,6 +1092,7 @@ app.delete("/delete-post", async (req, res) => {
   }
 
   try {
+   const postCount = await updatePostCountForUser(username, supabase);
     const { data, error } = await supabase
       .from("spot")
       .delete()
@@ -1101,7 +1102,7 @@ app.delete("/delete-post", async (req, res) => {
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ message: "Spot deleted successfully", data });
+    res.json({ message: "Spot deleted successfully", data, postCount });
   } catch (err) {
     res.status(500).json({ error: "Server error", details: err.message });
   }
@@ -1136,3 +1137,4 @@ app.get("/Get-Posts", async (req, res) => {
 app.listen(process.env.PORT, () =>
   console.log(`API ready → http://localhost:${process.env.PORT}`)
 );
+
