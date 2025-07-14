@@ -14,6 +14,13 @@ import os from "os";
 import { execSync } from "child_process";
 // import OpenAI from "openai";
 import { Credentials, Translator } from "@translated/lara";
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from '@ffmpeg-installer/ffmpeg';
+
+
+ffmpeg.setFfmpegPath(ffmpegPath.path);
+
+
 
 
 
@@ -41,6 +48,42 @@ app.use(cors());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+
+const convertAACtoMP3 = (buffer) =>
+  new Promise((resolve, reject) => {
+    const tempDir = os.tmpdir(); // Cross-platform temp directory
+    const tempInput = path.join(tempDir, `temp_${Date.now()}.aac`);
+    const tempOutput = path.join(tempDir, `temp_${Date.now()}.mp3`);
+
+    try {
+      fs.writeFileSync(tempInput, buffer);
+    } catch (err) {
+      console.error("❌ Failed to write temp .aac file:", err);
+      return reject(err);
+    }
+
+    ffmpeg(tempInput)
+      .setFfmpegPath(ffmpegPath.path)
+      .toFormat("mp3")
+      .on("error", (err) => {
+        console.error("❌ FFmpeg conversion failed:", err.message);
+        reject(err);
+      })
+      .on("end", () => {
+        try {
+          const mp3Buffer = fs.readFileSync(tempOutput);
+          fs.unlinkSync(tempInput);
+          fs.unlinkSync(tempOutput);
+          resolve(mp3Buffer);
+        } catch (readErr) {
+          console.error("❌ Failed to read or clean up files:", readErr);
+          reject(readErr);
+        }
+      })
+      .save(tempOutput);
+  });
+
+
 // ----------------SignUp--Route--------------------
 
 app.post(
@@ -61,7 +104,7 @@ app.post(
       const hash = await bcrypt.hash(password, 12);
 
       // ✅ Generate emoji via Python
-      const prompt = "happy local foodie cartoon emoji";
+      const prompt = "emoji cat boy";
       const emojiPath = execSync(`python genmoji.py "${prompt}"`).toString().trim();
       console.log("✅ Generated emoji at:", emojiPath);
 
@@ -229,6 +272,8 @@ app.post(
     { name: "audio", maxCount: 1 },
     { name: "image", maxCount: 1 },
   ]),
+
+  
   async (req, res) => {
     try {
       if (!req.files?.audio || !req.files?.image) {
@@ -268,12 +313,15 @@ app.post(
         return res.status(400).json({ error: "Latitude and longitude must be numbers" });
       }
 
-      // STEP 1: Transcribe audio
-      const whisperForm = new FormData();
-      whisperForm.append("audio", audioFile.buffer, {
-        filename: "audio.mp3",
-        contentType: audioFile.mimetype || "audio/mpeg",
-      });
+      // Transcribe
+      const convertedBuffer = await convertAACtoMP3(audioFile.buffer);
+
+const whisperForm = new FormData();
+whisperForm.append("audio", convertedBuffer, {
+  filename: "audio.mp3",
+  contentType: "audio/mpeg"
+});
+
 
       const whisperRes = await axios.post(
         "http://127.0.0.1:5002/transcribe",
@@ -284,7 +332,6 @@ app.post(
       const transcription = whisperRes.data.text?.trim() || "";
       console.log("📝 Transcription:", transcription);
 
-      // STEP 2: Translate to multiple languages using Lara SDK
       const translatedCaptions = {
         fr: await translateText(transcription, "fr-FR"),
         de: await translateText(transcription, "de-DE"),
@@ -293,7 +340,6 @@ app.post(
 
       const summary = "Quick summary: " + transcription.split(" ").slice(0, 6).join(" ") + "...";
 
-      // STEP 3: Insert into Supabase
       const insertPayload = {
         username,
         spotname: spotname?.trim() || "Unnamed Spot",
@@ -307,7 +353,7 @@ app.post(
         description: "More",
         created_at: new Date().toISOString(),
         caption: transcription,
-        transcription: transcription,
+        transcription,
         translated_captions: translatedCaptions,
         summary,
         likes_count: 0,
@@ -330,27 +376,25 @@ app.post(
         });
       }
 
-      res.status(201).json(data);
-    } catch (err) {
-      console.error("❌ Spot Upload Error:", err.message);
-      res.status(500).json({ error: err.message });
-    }
-
-    // ------------------------------------
-
-    try {
-      const { username } = req.body;
-      if (!username) return res.status(400).json({ error: "username required" });
-
+      // 🏅 Badge + post count update before sending response
       const newCount = await updateBadgesForUser(username, supabase);
       const postCount = await updatePostCountForUser(username, supabase);
-      res.json({ username, scores: newCount, postCount });
+
+      // ✅ Send single response
+      res.status(201).json({
+        spot: data,
+        badges: newCount,
+        postCount,
+      });
+
     } catch (err) {
-      console.error("❌ Badge Update Error:", err);
-      res.status(500).json({ error: err.message });
+      console.error("❌ Spot Upload Error:", err);
+      res.status(500).json({ error: err.message, details: err.response?.data || err.stack });
     }
+
   }
 );
+
 
 // ----dummy-route-------
 
@@ -559,6 +603,7 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
 
 
 
+
 // ------------------------------------------------------------------------
 
 // ----------------spot intro-------------------------
@@ -567,7 +612,10 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
 app.get("/spotintro", async (req, res) => {
   const { username, lat, lon } = req.query;
 
+  console.log("📥 Incoming request to /spotintro with query:", { username, lat, lon });
+
   if (!username || !lat || !lon) {
+    console.warn("⚠️ Missing query parameters");
     return res.status(400).json({
       error: "username, lat, and lon query parameters are required"
     });
@@ -577,10 +625,16 @@ app.get("/spotintro", async (req, res) => {
   const longitude = parseFloat(lon);
 
   if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
+    console.warn("⚠️ Invalid latitude or longitude format", { lat, lon });
     return res.status(400).json({
       error: "lat and lon must be valid numbers"
     });
   }
+
+  console.log("🔍 Querying Supabase for spot with:");
+  console.log(`   Username: ${username}`);
+  console.log(`   Latitude range: [${latitude - 0.000001}, ${latitude + 0.000001}]`);
+  console.log(`   Longitude range: [${longitude - 0.000001}, ${longitude + 0.000001}]`);
 
   try {
     const { data: spots, error } = await supabase
@@ -597,13 +651,28 @@ app.get("/spotintro", async (req, res) => {
       return res.status(500).json({ error: "Database error" });
     }
 
+    console.log(`✅ Supabase returned ${spots.length} result(s)`);
+
     if (!spots || spots.length === 0) {
-      console.error("❌ No spot found for query:", { username, latitude, longitude });
+      console.warn("⚠️ No spot found matching the location and username", {
+        username,
+        latitude,
+        longitude,
+      });
       return res.status(404).json({ error: "Spot not found" });
     }
 
-    // Return the first matched spot
     const spot = spots[0];
+
+    console.log("📤 Sending spot data:", {
+      username,
+      latitude,
+      longitude,
+      category: spot.category,
+      description: spot.description,
+      viewcount: spot.viewcount,
+      spotname: spot.spotname,
+    });
 
     return res.status(200).json({
       username,
@@ -627,41 +696,56 @@ app.get("/spotintro", async (req, res) => {
 // ------------------View-Count--Function--------------------
 export async function ViewCount(lat, lon) {
   try {
-    // First, get the current view count for that spot
-    const { data: spot, error: fetchErr } = await supabase
+    const range = 0.00001;
+    console.log("🔍 ViewCount called with:", { lat, lon });
+
+    const { data: allMatches, error: matchError } = await supabase
       .from("spots")
-      .select("viewcount")
-      .eq("latitude", lat)
-      .eq("longitude", lon)
-      .single();
+      .select("id, viewcount")
+      .gte("latitude", lat - range)
+      .lte("latitude", lat + range)
+      .gte("longitude", lon - range)
+      .lte("longitude", lon + range);
 
-    if (fetchErr) throw fetchErr;
+    if (matchError) {
+      console.error("❌ Error fetching matching spots:", matchError.message);
+      return;
+    }
 
+    console.log(`📊 Found ${allMatches?.length} matching spot(s) for viewcount`);
+
+    if (!allMatches || allMatches.length === 0) {
+      console.warn("⚠️ No spot found for given lat/lon to increment view count");
+      return;
+    }
+
+    const spot = allMatches[0];
     const newViewCount = (spot.viewcount || 0) + 1;
 
-    // Now update the view count
     const { data: updatedSpot, error: updateErr } = await supabase
       .from("spots")
       .update({ viewcount: newViewCount })
-      .eq("latitude", lat)
-      .eq("longitude", lon)
-      .select()
-      .single();
+      .eq("id", spot.id)
+      .select("viewcount")
+      .maybeSingle();
 
-    if (updateErr) throw updateErr;
+    if (updateErr) {
+      console.error("❌ Failed to update viewcount:", updateErr.message);
+      return;
+    }
 
-    console.log("Updated view count:", updatedSpot.viewcount);
+    console.log(`✅ Viewcount updated to ${updatedSpot.viewcount} for spot ID ${spot.id}`);
   } catch (error) {
-    console.error("ViewCount error:", error.message);
+    console.error("❌ ViewCount unexpected error:", error.message);
   }
 }
 
+
+
 app.get("/fullspot", async (req, res) => {
-  // Using hardcoded values for testing
   const { username, lat, lon } = req.query;
-  // const username = 'genzyzubair'
-  // const lat = '9876543'
-  // const lon = '675849039458'
+
+  console.log("📥 Incoming /fullspot request:", { username, lat, lon });
 
   if (!username || !lat || !lon) {
     return res.status(400).json({
@@ -679,43 +763,58 @@ app.get("/fullspot", async (req, res) => {
   }
 
   try {
-    ViewCount(latitude, longitude);
+    await ViewCount(latitude, longitude);
+
+    const range = 0.00001;
+
     const { data: spot, error } = await supabase
       .from("spots")
-      .select("id,spotname, image, audio_url")
+      .select("id, spotname, image, audio_url, transcription")
       .eq("username", username)
-      .eq("latitude", latitude)
-      .eq("longitude", longitude)
+      .gte("latitude", latitude - range)
+      .lte("latitude", latitude + range)
+      .gte("longitude", longitude - range)
+      .lte("longitude", longitude + range)
       .limit(1)
-      .maybeSingle(); // ✅ safer than .single()
+      .maybeSingle();
 
     if (error) {
-      console.error("❌ Supabase error:", error.message);
+      console.error("❌ Supabase error while fetching spot:", error.message);
       return res.status(500).json({ error: "Database error" });
     }
 
     if (!spot) {
-      console.error("❌ No spot found for given criteria");
+      console.warn("❌ No spot found matching given username and location", {
+        username,
+        latitude,
+        longitude,
+      });
       return res.status(404).json({ error: "Spot not found" });
     }
 
-    console.log("✅ Spot found:", spot.audio_url);
+    console.log("✅ Spot found:", {
+      id: spot.id,
+      name: spot.spotname,
+      audio: spot.audio_url,
+    });
 
     return res.status(200).json({
-      id:spot.id,
+      id: spot.id,
       username,
       latitude,
       longitude,
       image: spot.image,
       audio: spot.audio_url,
       spotname: spot.spotname,
-      script: spot.transcription
+      script: spot.transcription,
     });
   } catch (err) {
     console.error("❌ Internal Server Error:", err.message);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
+
 // ----------------translation-------------------------
 
 app.get("/translation", async (req, res) => {
@@ -935,7 +1034,7 @@ app.get("/nearby", async (req, res) => {
       ...s,
       distance: distanceMeters(userLat, userLng, s.latitude, s.longitude)
     }))
-    .filter(s => s.distance <= 3000 && s.category === SelectedCategory)
+    .filter(s => s.distance <= 7000 && s.category === SelectedCategory)
     .sort((a, b) => a.distance - b.distance);
   // console.log(result);
 
@@ -1089,26 +1188,36 @@ app.post("/search-spots", async (req, res) => {
 app.delete("/delete-post", async (req, res) => {
   const id = req.query.id;
 
+  console.log("🧾 Incoming DELETE request to /delete-post");
+  console.log("🔍 ID received:", id);
+
   if (!id) {
+    console.warn("⚠️ No ID provided in query params.");
     return res.status(400).json({ error: "ID is required" });
   }
 
   try {
-   const postCount = await updatePostCountForUser(username, supabase);
+    console.log("📡 Attempting to delete from 'spot' table where id =", id);
+
     const { data, error } = await supabase
-      .from("spot")
+      .from("spots")
       .delete()
       .eq("id", id);
 
     if (error) {
+      console.error("❌ Supabase deletion error:", error.message);
       return res.status(500).json({ error: error.message });
     }
 
-    res.json({ message: "Spot deleted successfully", data, postCount });
+    console.log("✅ Spot deleted successfully. Deleted data:", data);
+    res.json({ message: "Spot deleted successfully", data });
+    
   } catch (err) {
+    console.error("🚨 Server error during deletion:", err.message);
     res.status(500).json({ error: "Server error", details: err.message });
   }
 });
+
 
 // ------------user-post-------------------
 app.get("/Get-Posts", async (req, res) => {
@@ -1139,4 +1248,3 @@ app.get("/Get-Posts", async (req, res) => {
 app.listen(process.env.PORT, () =>
   console.log(`API ready → http://localhost:${process.env.PORT}`)
 );
-
