@@ -273,7 +273,7 @@ app.post(
     { name: "image", maxCount: 1 },
   ]),
 
-  
+
   async (req, res) => {
     try {
       if (!req.files?.audio || !req.files?.image) {
@@ -316,11 +316,11 @@ app.post(
       // Transcribe
       const convertedBuffer = await convertAACtoMP3(audioFile.buffer);
 
-const whisperForm = new FormData();
-whisperForm.append("audio", convertedBuffer, {
-  filename: "audio.mp3",
-  contentType: "audio/mpeg"
-});
+      const whisperForm = new FormData();
+      whisperForm.append("audio", convertedBuffer, {
+        filename: "audio.mp3",
+        contentType: "audio/mpeg"
+      });
 
 
       const whisperRes = await axios.post(
@@ -577,17 +577,17 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
       await new Promise(resolve => setTimeout(resolve, 3000)); // wait 3s
     }
 
-  
+
     // 4️⃣ Extract title and build 2-line description
     const title = transcript.chapters?.[0]?.headline || "No title generated";
 
     let description = transcript.chapters?.[0]?.summary || "No short description available";
 
-  // ✂️ Trim to only first 2 sentences
-     const sentences = description.split('.').filter(Boolean);
-     description = sentences.slice(0, 2).join('. ').trim();
-     if (description && !description.endsWith('.')) {
-     description += '.';
+    // ✂️ Trim to only first 2 sentences
+    const sentences = description.split('.').filter(Boolean);
+    description = sentences.slice(0, 2).join('. ').trim();
+    if (description && !description.endsWith('.')) {
+      description += '.';
     }
 
     res.json({
@@ -688,7 +688,6 @@ app.get("/spotintro", async (req, res) => {
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
 
 
 // ----------------full spot-------------------------
@@ -1078,7 +1077,7 @@ app.post("/return-profile", async (req, res) => {
     }
 
     const uploaded_spots = spots.map(spot => ({
-      id:spot.id,
+      id: spot.id,
       spotimage: spot.image,
       title: spot.spotname,
       viewscount: spot.viewcount,
@@ -1211,7 +1210,7 @@ app.delete("/delete-post", async (req, res) => {
 
     console.log("✅ Spot deleted successfully. Deleted data:", data);
     res.json({ message: "Spot deleted successfully", data });
-    
+
   } catch (err) {
     console.error("🚨 Server error during deletion:", err.message);
     res.status(500).json({ error: "Server error", details: err.message });
@@ -1219,7 +1218,7 @@ app.delete("/delete-post", async (req, res) => {
 });
 
 
-// ------------user-post-------------------
+// ------------user-post------------------------------------------------------------------------------------------
 app.get("/Get-Posts", async (req, res) => {
   const { username } = req.body;
 
@@ -1242,6 +1241,141 @@ app.get("/Get-Posts", async (req, res) => {
     res.status(500).json({ error: "Server error", details: err.message });
   }
 });
+
+
+// --------------------Set-Home-Location + Area Name Update -----------------------
+app.post("/set-home", async (req, res) => {
+  try {
+    const { username, lat, lon } = req.body;
+
+    if (!username || typeof lat !== "number" || typeof lon !== "number") {
+      return res.status(400).json({ error: "Invalid or missing input data." });
+    }
+
+    // Fetch user
+    const { data: user, error: fetchError } = await supabase
+      .from("users")
+      .select("latitude, longitude")
+      .eq("username", username)
+      .single();
+
+    if (fetchError) {
+      console.error("Error fetching user:", fetchError.message);
+      return res.status(500).json({ error: "Database error while checking user." });
+    }
+
+    if (!user) {
+      return res.status(404).json({ error: `User '${username}' not found.` });
+    }
+
+    // Only update if lat/lon is null
+    if (user.latitude === null || user.longitude === null) {
+      const areaName = await getLocationName(lat, lon);
+
+      if (!areaName) {
+        return res.status(500).json({ error: "Failed to resolve area name from coordinates." });
+      }
+
+      const { error: updateError } = await supabase
+        .from("users")
+        .update({
+          latitude: lat,
+          longitude: lon,
+          area_name: areaName
+        })
+        .eq("username", username);
+
+      if (updateError) {
+        console.error("Error updating user location:", updateError.message);
+        return res.status(500).json({ error: "Failed to update user location." });
+      }
+
+      return res.status(200).json({ message: "Location and area updated successfully." });
+    } else {
+      return res.status(200).json({ message: "Location already set." });
+    }
+
+  } catch (err) {
+    console.error("Unexpected server error in /set-home:", err);
+    return res.status(500).json({ error: "Unexpected server error." });
+  }
+});
+
+
+
+// ---------------Area-LeaderBoard----------------------
+const getLocationName = async (lat, lon) => {
+  const { data } = await axios.get("https://api.opencagedata.com/geocode/v1/json", {
+    params: {
+      key: process.env.OPENCAGE_API_KEY,
+      q: `${lat},${lon}`,
+    },
+  });
+
+  const components = data.results[0]?.components;
+  return (
+    components?.suburb ||
+    components?.neighbourhood ||
+    components?.city_district ||
+    components?.city
+  );
+};
+
+// -------------------------------------------
+app.post("/area-leaderboard", async (req, res) => {
+  try {
+    const { lat, lon } = req.body;
+
+    if (!lat || !lon) {
+      return res.status(400).json({ error: "lat/lon missing" });
+    }
+
+    // Step 1: Convert lat/lon to area name
+    const areaName = await getLocationName(lat, lon);
+    if (!areaName) {
+      return res.status(500).json({ error: "Unable to resolve area name" });
+    }
+
+    // Step 2: Get all users in that area
+    const { data: usersInArea, error: usersErr } = await supabase
+      .from("users")
+      .select("username")
+      .eq("area_name", areaName);
+
+    if (usersErr) {
+      console.error("Error fetching users in area:", usersErr.message);
+      return res.status(500).json({ error: "Failed to fetch area users" });
+    }
+
+    const usernames = usersInArea.map(user => user.username);
+    if (usernames.length === 0) {
+      return res.json({ area: areaName, leaderboard: [] });
+    }
+
+    // Step 3: Fetch their scores from badges
+    const { data: scores, error: badgeErr } = await supabase
+      .from("badges")
+      .select("username, scores")
+      .in("username", usernames);
+
+    if (badgeErr) {
+      console.error("Error fetching badge scores:", badgeErr.message);
+      return res.status(500).json({ error: "Failed to fetch scores" });
+    }
+
+    // Step 4: Sort by score
+    const leaderboard = scores.sort((a, b) => b.scores - a.scores);
+
+    return res.status(200).json({
+      area: areaName,
+      leaderboard
+    });
+  } catch (err) {
+    console.error("Unexpected error in /area-leaderboard:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 
 // ----------------Server-Kick-Start--------------------
 
