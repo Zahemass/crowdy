@@ -14,11 +14,8 @@ import os from "os";
 import { execSync } from "child_process";
 // import OpenAI from "openai";
 import { Credentials, Translator } from "@translated/lara";
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 
 
-ffmpeg.setFfmpegPath(ffmpegPath.path);
 
 
 
@@ -47,42 +44,6 @@ import cors from "cors";
 app.use(cors());
 
 const upload = multer({ storage: multer.memoryStorage() });
-
-
-const convertAACtoMP3 = (buffer) =>
-  new Promise((resolve, reject) => {
-    const tempDir = os.tmpdir(); // Cross-platform temp directory
-    const tempInput = path.join(tempDir, `temp_${Date.now()}.aac`);
-    const tempOutput = path.join(tempDir, `temp_${Date.now()}.mp3`);
-
-    try {
-      fs.writeFileSync(tempInput, buffer);
-    } catch (err) {
-      console.error("❌ Failed to write temp .aac file:", err);
-      return reject(err);
-    }
-
-    ffmpeg(tempInput)
-      .setFfmpegPath(ffmpegPath.path)
-      .toFormat("mp3")
-      .on("error", (err) => {
-        console.error("❌ FFmpeg conversion failed:", err.message);
-        reject(err);
-      })
-      .on("end", () => {
-        try {
-          const mp3Buffer = fs.readFileSync(tempOutput);
-          fs.unlinkSync(tempInput);
-          fs.unlinkSync(tempOutput);
-          resolve(mp3Buffer);
-        } catch (readErr) {
-          console.error("❌ Failed to read or clean up files:", readErr);
-          reject(readErr);
-        }
-      })
-      .save(tempOutput);
-  });
-
 
 // ----------------SignUp--Route--------------------
 
@@ -1044,37 +1005,33 @@ app.get("/nearby", async (req, res) => {
 // ----------------Profile-Return-------------------------
 app.post("/return-profile", async (req, res) => {
   const { username } = req.body;
-
   console.log("🛠 Incoming username:", username);
 
-  if (!username) {
-    return res.status(400).json({ error: "Username is required" });
-  }
+  if (!username) return res.status(400).json({ error: "Username is required" });
 
   const cleanUsername = username.trim().toLowerCase();
 
   try {
     const { data: user, error: userErr } = await supabase
       .from("users")
-      .select("postcount, profilepic") // 👈 SELECT profile_image too
+      .select("postcount, profilepic")
       .ilike("username", cleanUsername)
-      .single();
+      .maybeSingle();
 
     console.log("🧩 Supabase user result:", user);
     console.log("🧩 Supabase error:", userErr);
 
-    if (userErr || !user) {
-      return res.status(404).json({ error: "User not found" });
-    }
+    if (!user || userErr) return res.status(404).json({ error: "User not found" });
 
     const { data: spots, error: spotErr } = await supabase
       .from("spots")
       .select("id, image, spotname, viewcount, likes_count")
       .ilike("username", cleanUsername);
 
-    if (spotErr) {
-      return res.status(500).json({ error: "Error fetching spots" });
-    }
+    console.log("📍 Spot Error:", spotErr);
+    console.log("📍 Spots Data:", spots);
+
+    if (spotErr) return res.status(500).json({ error: "Error fetching spots" });
 
     const uploaded_spots = spots.map(spot => ({
       id: spot.id,
@@ -1088,25 +1045,28 @@ app.post("/return-profile", async (req, res) => {
       .from("badges")
       .select("scores")
       .ilike("username", cleanUsername)
-      .single();
+      .maybeSingle();
 
-    if (badgeErr) {
-      return res.status(500).json({ error: "Error fetching badge" });
-    }
+    console.log("🎖️ Badge Error:", badgeErr);
+    console.log("🎖️ Badge Data:", badges);
 
-    res.json({
+    if (badgeErr) return res.status(500).json({ error: "Error fetching badge" });
+
+    // ✅ Final response
+    return res.status(200).json({
       username: cleanUsername,
-      profile_image: user.profilepic || null, // 👈 Include it in the response
+      profile_image: user.profilepic || null,
       postcount: user.postcount || 0,
-      score: badges.scores || 0,
+      score: badges?.scores || 0,
       uploaded_spots
     });
 
   } catch (err) {
-    console.error("❌ Profile fetch error:", err.message);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("❌ Internal Server Error:", err.message);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
+
 // --------------search-query-----------------
 
 const OPENCAGE_API_KEY = process.env.OPENCAGE_API_KEY;
