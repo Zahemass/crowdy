@@ -14,19 +14,12 @@ import os from "os";
 import { execSync } from "child_process";
 // import OpenAI from "openai";
 import { Credentials, Translator } from "@translated/lara";
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegPath from "@ffmpeg-installer/ffmpeg";
 
-
-
-
-
-
-
-
-
+ffmpeg.setFfmpegPath(ffmpegPath.path);
 
 dotenv.config();
-
-
 
 const app = express();
 app.use(express.json());
@@ -45,6 +38,40 @@ app.use(cors());
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+const convertAACtoMP3 = (buffer) =>
+  new Promise((resolve, reject) => {
+    const tempDir = os.tmpdir(); // Cross-platform temp directory
+    const tempInput = path.join(tempDir, `temp_${Date.now()}.aac`);
+    const tempOutput = path.join(tempDir, `temp_${Date.now()}.mp3`);
+
+    try {
+      fs.writeFileSync(tempInput, buffer);
+    } catch (err) {
+      console.error("❌ Failed to write temp .aac file:", err);
+      return reject(err);
+    }
+
+    ffmpeg(tempInput)
+      .setFfmpegPath(ffmpegPath.path)
+      .toFormat("mp3")
+      .on("error", (err) => {
+        console.error("❌ FFmpeg conversion failed:", err.message);
+        reject(err);
+      })
+      .on("end", () => {
+        try {
+          const mp3Buffer = fs.readFileSync(tempOutput);
+          fs.unlinkSync(tempInput);
+          fs.unlinkSync(tempOutput);
+          resolve(mp3Buffer);
+        } catch (readErr) {
+          console.error("❌ Failed to read or clean up files:", readErr);
+          reject(readErr);
+        }
+      })
+      .save(tempOutput);
+  });
+
 // ----------------SignUp--Route--------------------
 
 app.post(
@@ -56,7 +83,9 @@ app.post(
     console.log("📥 Received:", req.body);
 
     if (!username || !password) {
-      return res.status(400).json({ error: "Username & password are required" });
+      return res
+        .status(400)
+        .json({ error: "Username & password are required" });
     }
 
     try {
@@ -66,23 +95,23 @@ app.post(
 
       // ✅ Generate emoji via Python
       const prompt = "emoji cat boy";
-      const emojiPath = execSync(`python genmoji.py "${prompt}"`).toString().trim();
+      const emojiPath = execSync(`python genmoji.py "${prompt}"`)
+        .toString()
+        .trim();
       console.log("✅ Generated emoji at:", emojiPath);
 
       // ✅ Upload to Supabase Storage
       const emojiFile = fs.readFileSync(emojiPath);
       const imagePath = `profilepics/${Date.now()}_${username}.png`;
 
-      const { error: uploadError } = await supabase
-        .storage
+      const { error: uploadError } = await supabase.storage
         .from("profilepics")
         .upload(imagePath, emojiFile, { contentType: "image/png" });
 
       if (uploadError) throw uploadError;
 
       // ✅ Get public URL
-      const { publicUrl: profilepic } = supabase
-        .storage
+      const { publicUrl: profilepic } = supabase.storage
         .from("profilepics")
         .getPublicUrl(imagePath).data;
 
@@ -108,15 +137,12 @@ app.post(
         message: "Signup successful",
         user: data[0],
       });
-
     } catch (err) {
       console.error("Signup error:", err);
       return res.status(500).json({ error: "Internal Server Error" });
     }
   }
 );
-
-
 
 // ----------------Login--Route--------------------
 
@@ -161,7 +187,10 @@ const translateText = async (text, targetLang) => {
     const res = await lara.translate(text, "en-US", targetLang);
     return res.translation;
   } catch (err) {
-    console.error(`❌ Lara Translation SDK error for ${targetLang}:`, err.message);
+    console.error(
+      `❌ Lara Translation SDK error for ${targetLang}:`,
+      err.message
+    );
     throw new Error(`Translation to ${targetLang} failed.`);
   }
 };
@@ -171,9 +200,9 @@ export async function updateBadgesForUser(username, supabase) {
   // 1️⃣ try to fetch the row
   const { data: row, error: selErr } = await supabase
     .from("badges")
-    .select("scores")          // only need the counter
+    .select("scores") // only need the counter
     .eq("username", username)
-    .maybeSingle();            // returns null if not found
+    .maybeSingle(); // returns null if not found
 
   if (selErr) throw selErr;
 
@@ -183,11 +212,10 @@ export async function updateBadgesForUser(username, supabase) {
       .from("badges")
       .update({ scores: row.scores + 5 })
       .eq("username", username)
-      .select("scores")        // get new value back
+      .select("scores"); // get new value back
 
     if (error) throw error;
     return data[0].scores;
-
   } else {
     // 2b️⃣ no record yet → insert
     const { data, error } = await supabase
@@ -222,9 +250,6 @@ export async function updatePostCountForUser(username, supabase) {
   return data.postCount;
 }
 
-
-
-
 // ------------------end-badge-function--------------
 
 app.post(
@@ -233,7 +258,6 @@ app.post(
     { name: "audio", maxCount: 1 },
     { name: "image", maxCount: 1 },
   ]),
-
 
   async (req, res) => {
     try {
@@ -271,18 +295,19 @@ app.post(
       const lng = parseFloat(longitude);
 
       if (isNaN(lat) || isNaN(lng)) {
-        return res.status(400).json({ error: "Latitude and longitude must be numbers" });
+        return res
+          .status(400)
+          .json({ error: "Latitude and longitude must be numbers" });
       }
 
-      // Transcribe
+      // // Transcribe
       const convertedBuffer = await convertAACtoMP3(audioFile.buffer);
 
       const whisperForm = new FormData();
       whisperForm.append("audio", convertedBuffer, {
         filename: "audio.mp3",
-        contentType: "audio/mpeg"
+        contentType: "audio/mpeg",
       });
-
 
       const whisperRes = await axios.post(
         "http://127.0.0.1:5002/transcribe",
@@ -299,7 +324,10 @@ app.post(
         hi: await translateText(transcription, "hi-IN"),
       };
 
-      const summary = "Quick summary: " + transcription.split(" ").slice(0, 6).join(" ") + "...";
+      const summary =
+        "Quick summary: " +
+        transcription.split(" ").slice(0, 6).join(" ") +
+        "...";
 
       const insertPayload = {
         username,
@@ -347,15 +375,14 @@ app.post(
         badges: newCount,
         postCount,
       });
-
     } catch (err) {
       console.error("❌ Spot Upload Error:", err);
-      res.status(500).json({ error: err.message, details: err.response?.data || err.stack });
+      res
+        .status(500)
+        .json({ error: err.message, details: err.response?.data || err.stack });
     }
-
   }
 );
-
 
 // ----dummy-route-------
 
@@ -465,10 +492,7 @@ app.post(
 //   }
 // );
 
-
-
 // ------end--dummy---route---------------------------
-
 
 // --------------Audio title suggestion-----------------
 
@@ -531,54 +555,57 @@ app.post("/audiotitle", upload.single("audio"), async (req, res) => {
         break;
       } else if (pollRes.data.status === "error") {
         console.error("❌ Transcription failed:", pollRes.data.error);
-        return res.status(500).json({ error: "Transcription failed", details: pollRes.data.error });
+        return res
+          .status(500)
+          .json({ error: "Transcription failed", details: pollRes.data.error });
       }
 
       console.log("⏳ Waiting for transcription to complete...");
-      await new Promise(resolve => setTimeout(resolve, 3000)); // wait 3s
+      await new Promise((resolve) => setTimeout(resolve, 3000)); // wait 3s
     }
-
 
     // 4️⃣ Extract title and build 2-line description
     const title = transcript.chapters?.[0]?.headline || "No title generated";
 
-    let description = transcript.chapters?.[0]?.summary || "No short description available";
+    let description =
+      transcript.chapters?.[0]?.summary || "No short description available";
 
     // ✂️ Trim to only first 2 sentences
-    const sentences = description.split('.').filter(Boolean);
-    description = sentences.slice(0, 2).join('. ').trim();
-    if (description && !description.endsWith('.')) {
-      description += '.';
+    const sentences = description.split(".").filter(Boolean);
+    description = sentences.slice(0, 2).join(". ").trim();
+    if (description && !description.endsWith(".")) {
+      description += ".";
     }
 
     res.json({
       title,
-      description
+      description,
     });
-
   } catch (err) {
     console.error("❌ Error:", err);
-    res.status(500).json({ error: "Internal Server Error", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Internal Server Error", details: err.message });
   }
 });
-
-
-
 
 // ------------------------------------------------------------------------
 
 // ----------------spot intro-------------------------
 
-
 app.get("/spotintro", async (req, res) => {
   const { username, lat, lon } = req.query;
 
-  console.log("📥 Incoming request to /spotintro with query:", { username, lat, lon });
+  console.log("📥 Incoming request to /spotintro with query:", {
+    username,
+    lat,
+    lon,
+  });
 
   if (!username || !lat || !lon) {
     console.warn("⚠️ Missing query parameters");
     return res.status(400).json({
-      error: "username, lat, and lon query parameters are required"
+      error: "username, lat, and lon query parameters are required",
     });
   }
 
@@ -588,14 +615,18 @@ app.get("/spotintro", async (req, res) => {
   if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
     console.warn("⚠️ Invalid latitude or longitude format", { lat, lon });
     return res.status(400).json({
-      error: "lat and lon must be valid numbers"
+      error: "lat and lon must be valid numbers",
     });
   }
 
   console.log("🔍 Querying Supabase for spot with:");
   console.log(`   Username: ${username}`);
-  console.log(`   Latitude range: [${latitude - 0.000001}, ${latitude + 0.000001}]`);
-  console.log(`   Longitude range: [${longitude - 0.000001}, ${longitude + 0.000001}]`);
+  console.log(
+    `   Latitude range: [${latitude - 0.000001}, ${latitude + 0.000001}]`
+  );
+  console.log(
+    `   Longitude range: [${longitude - 0.000001}, ${longitude + 0.000001}]`
+  );
 
   try {
     const { data: spots, error } = await supabase
@@ -650,7 +681,6 @@ app.get("/spotintro", async (req, res) => {
   }
 });
 
-
 // ----------------full spot-------------------------
 
 // ------------------View-Count--Function--------------------
@@ -672,10 +702,14 @@ export async function ViewCount(lat, lon) {
       return;
     }
 
-    console.log(`📊 Found ${allMatches?.length} matching spot(s) for viewcount`);
+    console.log(
+      `📊 Found ${allMatches?.length} matching spot(s) for viewcount`
+    );
 
     if (!allMatches || allMatches.length === 0) {
-      console.warn("⚠️ No spot found for given lat/lon to increment view count");
+      console.warn(
+        "⚠️ No spot found for given lat/lon to increment view count"
+      );
       return;
     }
 
@@ -694,13 +728,13 @@ export async function ViewCount(lat, lon) {
       return;
     }
 
-    console.log(`✅ Viewcount updated to ${updatedSpot.viewcount} for spot ID ${spot.id}`);
+    console.log(
+      `✅ Viewcount updated to ${updatedSpot.viewcount} for spot ID ${spot.id}`
+    );
   } catch (error) {
     console.error("❌ ViewCount unexpected error:", error.message);
   }
 }
-
-
 
 app.get("/fullspot", async (req, res) => {
   const { username, lat, lon } = req.query;
@@ -774,7 +808,6 @@ app.get("/fullspot", async (req, res) => {
   }
 });
 
-
 // ----------------translation-------------------------
 
 app.get("/translation", async (req, res) => {
@@ -785,7 +818,7 @@ app.get("/translation", async (req, res) => {
   if (!username || !lat || !lon || !lang) {
     console.warn("⚠️ Missing required query parameters");
     return res.status(400).json({
-      error: "username, lat, lon, and lang query parameters are required"
+      error: "username, lat, lon, and lang query parameters are required",
     });
   }
 
@@ -797,7 +830,7 @@ app.get("/translation", async (req, res) => {
   if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
     console.error("❌ Invalid lat/lon values");
     return res.status(400).json({
-      error: "lat and lon must be valid numbers"
+      error: "lat and lon must be valid numbers",
     });
   }
 
@@ -806,7 +839,7 @@ app.get("/translation", async (req, res) => {
     english: "en",
     french: "fr",
     hindi: "hi",
-    german: "de"
+    german: "de",
   };
 
   const langCode = langMap[lang.toLowerCase()];
@@ -848,7 +881,7 @@ app.get("/translation", async (req, res) => {
     if (!translation) {
       console.warn(`⚠️ Translation for language '${langCode}' not found`);
       return res.status(404).json({
-        error: `Translation for language '${langCode}' not found`
+        error: `Translation for language '${langCode}' not found`,
       });
     }
 
@@ -859,17 +892,13 @@ app.get("/translation", async (req, res) => {
       latitude: spot.latitude,
       longitude: spot.longitude,
       language: langCode,
-      translation
+      translation,
     });
   } catch (err) {
     console.error("❌ Internal Server Error:", err.message);
     return res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
-
-
-
 
 // ----------------return summary-------------------------
 
@@ -878,7 +907,7 @@ app.get("/returnsummary", async (req, res) => {
 
   if (!username || !lat || !lon) {
     return res.status(400).json({
-      error: "username, lat, and lon query parameters are required"
+      error: "username, lat, and lon query parameters are required",
     });
   }
 
@@ -887,7 +916,7 @@ app.get("/returnsummary", async (req, res) => {
 
   if (Number.isNaN(latitude) || Number.isNaN(longitude)) {
     return res.status(400).json({
-      error: "lat and lon must be valid numbers"
+      error: "lat and lon must be valid numbers",
     });
   }
 
@@ -907,7 +936,11 @@ app.get("/returnsummary", async (req, res) => {
     }
 
     if (!spots || spots.length === 0) {
-      console.error("❌ No spot found for query:", { username, latitude, longitude });
+      console.error("❌ No spot found for query:", {
+        username,
+        latitude,
+        longitude,
+      });
       return res.status(404).json({ error: "Spot not found" });
     }
 
@@ -927,26 +960,14 @@ app.get("/returnsummary", async (req, res) => {
   }
 });
 
-
-
-
-
-
-
-
 // ----------------Badges-Update-Route--------------------
 
-app.post("/badges-update", (req, res) => {
-
-
-
-});
+app.post("/badges-update", (req, res) => {});
 
 // -----------------END_POST_REQUEST--------------------
 
-
-const EARTH_RADIUS = 6_371_000;            // metres
-const toRad = deg => (deg * Math.PI) / 180;
+const EARTH_RADIUS = 6_371_000; // metres
+const toRad = (deg) => (deg * Math.PI) / 180;
 
 /**
  * Returns distance **in metres** between two points
@@ -957,123 +978,118 @@ export function distanceMeters(lat1, lon1, lat2, lon2) {
 
   const a =
     Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(lat1)) *
-    Math.cos(toRad(lat2)) *
-    Math.sin(dLon / 2) ** 2;
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
 
   return 2 * EARTH_RADIUS * Math.asin(Math.sqrt(a));
 }
 
-
-
 // ----------------GET-REQUESTS-------------------------
 
 app.get("/nearby", async (req, res) => {
-  const userLat = Number(req.query.lat);  // ← fixed
-  const userLng = Number(req.query.lng);  // ← fixed
+  const userLat = Number(req.query.lat); // ← fixed
+  const userLng = Number(req.query.lng); // ← fixed
   const SelectedCategory = req.query.SearchQuery;
   // const { lat,lng, SearchCategry} = req.body;
   // const userLat = lat
   // const userLng = lng
-  // const SelectedCategory = SearchCategry;    
-
+  // const SelectedCategory = SearchCategry;
 
   if (Number.isNaN(userLat) || Number.isNaN(userLng)) {
-    return res.status(400).json({ error: "lat & lng query params are required numbers" });
+    return res
+      .status(400)
+      .json({ error: "lat & lng query params are required numbers" });
   }
 
   const { data: spots, error } = await supabase
     .from("spots")
     .select("spotname, latitude, longitude, category, username"); // 👈 include username
 
-
   if (error) return res.status(500).json({ error: error.message });
 
   const result = spots
-    .map(s => ({
+    .map((s) => ({
       ...s,
-      distance: distanceMeters(userLat, userLng, s.latitude, s.longitude)
+      distance: distanceMeters(userLat, userLng, s.latitude, s.longitude),
     }))
-    .filter(s => s.distance <= 7000 && s.category === SelectedCategory)
+    .filter((s) => s.distance <= 7000 && s.category === SelectedCategory)
     .sort((a, b) => a.distance - b.distance);
   // console.log(result);
 
   res.json(result);
 });
 
-
 // ----------------Profile-Return-------------------------
 app.post("/return-profile", async (req, res) => {
   const { username } = req.body;
+
   console.log("🛠 Incoming username:", username);
 
-  if (!username) return res.status(400).json({ error: "Username is required" });
+  if (!username) {
+    return res.status(400).json({ error: "Username is required" });
+  }
 
   const cleanUsername = username.trim().toLowerCase();
 
   try {
     const { data: user, error: userErr } = await supabase
       .from("users")
-      .select("postcount, profilepic")
+      .select("postcount, profilepic") // 👈 SELECT profile_image too
       .ilike("username", cleanUsername)
-      .maybeSingle();
+      .single();
 
     console.log("🧩 Supabase user result:", user);
     console.log("🧩 Supabase error:", userErr);
 
-    if (!user || userErr) return res.status(404).json({ error: "User not found" });
+    if (userErr || !user) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
     const { data: spots, error: spotErr } = await supabase
       .from("spots")
       .select("id, image, spotname, viewcount, likes_count")
       .ilike("username", cleanUsername);
 
-    console.log("📍 Spot Error:", spotErr);
-    console.log("📍 Spots Data:", spots);
+    if (spotErr) {
+      return res.status(500).json({ error: "Error fetching spots" });
+    }
 
-    if (spotErr) return res.status(500).json({ error: "Error fetching spots" });
-
-    const uploaded_spots = spots.map(spot => ({
+    const uploaded_spots = spots.map((spot) => ({
       id: spot.id,
       spotimage: spot.image,
       title: spot.spotname,
       viewscount: spot.viewcount,
-      likescount: spot.likes_count
+      likescount: spot.likes_count,
     }));
 
     const { data: badges, error: badgeErr } = await supabase
       .from("badges")
       .select("scores")
       .ilike("username", cleanUsername)
-      .maybeSingle();
+      .single();
 
-    console.log("🎖️ Badge Error:", badgeErr);
-    console.log("🎖️ Badge Data:", badges);
+    if (badgeErr) {
+      return res.status(500).json({ error: "Error fetching badge" });
+    }
 
-    if (badgeErr) return res.status(500).json({ error: "Error fetching badge" });
-
-    // ✅ Final response
-    return res.status(200).json({
+    res.json({
       username: cleanUsername,
-      profile_image: user.profilepic || null,
+      profile_image: user.profilepic || null, // 👈 Include it in the response
       postcount: user.postcount || 0,
-      score: badges?.scores || 0,
-      uploaded_spots
+      score: badges.scores || 0,
+      uploaded_spots,
     });
-
   } catch (err) {
-    console.error("❌ Internal Server Error:", err.message);
-    return res.status(500).json({ error: "Internal server error" });
+    console.error("❌ Profile fetch error:", err.message);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
-
 // --------------search-query-----------------
 
 const OPENCAGE_API_KEY = process.env.OPENCAGE_API_KEY;
 
 function getBoundingBox(lat, lon, radiusInKm = 2) {
   const latR = 1 / 110.574;
-  const lonR = 1 / (111.320 * Math.cos(lat * (Math.PI / 180)));
+  const lonR = 1 / (111.32 * Math.cos(lat * (Math.PI / 180)));
 
   const latDelta = radiusInKm * latR;
   const lonDelta = radiusInKm * lonR;
@@ -1086,8 +1102,6 @@ function getBoundingBox(lat, lon, radiusInKm = 2) {
   };
 }
 
-
-
 // Route: /search-spots
 app.post("/search-spots", async (req, res) => {
   const { SearchQuery } = req.body;
@@ -1098,12 +1112,15 @@ app.post("/search-spots", async (req, res) => {
 
   try {
     // 1. Convert query to lat/lon
-    const geoRes = await axios.get("https://api.opencagedata.com/geocode/v1/json", {
-      params: {
-        q: SearchQuery,
-        key: OPENCAGE_API_KEY,
-      },
-    });
+    const geoRes = await axios.get(
+      "https://api.opencagedata.com/geocode/v1/json",
+      {
+        params: {
+          q: SearchQuery,
+          key: OPENCAGE_API_KEY,
+        },
+      }
+    );
 
     const results = geoRes.data.results;
     if (!results || results.length === 0) {
@@ -1133,14 +1150,12 @@ app.post("/search-spots", async (req, res) => {
       total_spots: data.length,
       spots: data,
     });
-    console.log('Spots', data);
+    console.log("Spots", data);
   } catch (err) {
     console.error("Error:", err.message);
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
-
-
 
 // -------------------------delete route----------------------
 
@@ -1158,10 +1173,7 @@ app.delete("/delete-post", async (req, res) => {
   try {
     console.log("📡 Attempting to delete from 'spot' table where id =", id);
 
-    const { data, error } = await supabase
-      .from("spots")
-      .delete()
-      .eq("id", id);
+    const { data, error } = await supabase.from("spots").delete().eq("id", id);
 
     if (error) {
       console.error("❌ Supabase deletion error:", error.message);
@@ -1170,13 +1182,11 @@ app.delete("/delete-post", async (req, res) => {
 
     console.log("✅ Spot deleted successfully. Deleted data:", data);
     res.json({ message: "Spot deleted successfully", data });
-
   } catch (err) {
     console.error("🚨 Server error during deletion:", err.message);
     res.status(500).json({ error: "Server error", details: err.message });
   }
 });
-
 
 // ------------user-post------------------------------------------------------------------------------------------
 app.get("/Get-Posts", async (req, res) => {
@@ -1202,7 +1212,6 @@ app.get("/Get-Posts", async (req, res) => {
   }
 });
 
-
 // --------------------Set-Home-Location + Area Name Update -----------------------
 app.post("/set-home", async (req, res) => {
   try {
@@ -1221,7 +1230,9 @@ app.post("/set-home", async (req, res) => {
 
     if (fetchError) {
       console.error("Error fetching user:", fetchError.message);
-      return res.status(500).json({ error: "Database error while checking user." });
+      return res
+        .status(500)
+        .json({ error: "Database error while checking user." });
     }
 
     if (!user) {
@@ -1233,7 +1244,9 @@ app.post("/set-home", async (req, res) => {
       const areaName = await getLocationName(lat, lon);
 
       if (!areaName) {
-        return res.status(500).json({ error: "Failed to resolve area name from coordinates." });
+        return res
+          .status(500)
+          .json({ error: "Failed to resolve area name from coordinates." });
       }
 
       const { error: updateError } = await supabase
@@ -1241,36 +1254,40 @@ app.post("/set-home", async (req, res) => {
         .update({
           latitude: lat,
           longitude: lon,
-          area_name: areaName
+          area_name: areaName,
         })
         .eq("username", username);
 
       if (updateError) {
         console.error("Error updating user location:", updateError.message);
-        return res.status(500).json({ error: "Failed to update user location." });
+        return res
+          .status(500)
+          .json({ error: "Failed to update user location." });
       }
 
-      return res.status(200).json({ message: "Location and area updated successfully." });
+      return res
+        .status(200)
+        .json({ message: "Location and area updated successfully." });
     } else {
       return res.status(200).json({ message: "Location already set." });
     }
-
   } catch (err) {
     console.error("Unexpected server error in /set-home:", err);
     return res.status(500).json({ error: "Unexpected server error." });
   }
 });
 
-
-
 // ---------------Area-LeaderBoard----------------------
 const getLocationName = async (lat, lon) => {
-  const { data } = await axios.get("https://api.opencagedata.com/geocode/v1/json", {
-    params: {
-      key: process.env.OPENCAGE_API_KEY,
-      q: `${lat},${lon}`,
-    },
-  });
+  const { data } = await axios.get(
+    "https://api.opencagedata.com/geocode/v1/json",
+    {
+      params: {
+        key: process.env.OPENCAGE_API_KEY,
+        q: `${lat},${lon}`,
+      },
+    }
+  );
 
   const components = data.results[0]?.components;
   return (
@@ -1307,7 +1324,7 @@ app.post("/area-leaderboard", async (req, res) => {
       return res.status(500).json({ error: "Failed to fetch area users" });
     }
 
-    const usernames = usersInArea.map(user => user.username);
+    const usernames = usersInArea.map((user) => user.username);
     if (usernames.length === 0) {
       return res.json({ area: areaName, leaderboard: [] });
     }
@@ -1328,7 +1345,7 @@ app.post("/area-leaderboard", async (req, res) => {
 
     return res.status(200).json({
       area: areaName,
-      leaderboard
+      leaderboard,
     });
   } catch (err) {
     console.error("Unexpected error in /area-leaderboard:", err);
@@ -1336,6 +1353,124 @@ app.post("/area-leaderboard", async (req, res) => {
   }
 });
 
+// --1----Journey-status--------
+app.post("/journey-status", async (req, res) => {
+  const { username } = req.body;
+
+  try {
+    const { data, error } = await supabase
+      .from("users")
+      .select("status")
+      .eq("username", username)
+      .single(); // we expect only one row
+
+    if (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+
+    const status = data?.status;
+
+    // Assuming status is a boolean or can be interpreted as one
+    return res.json({ journeyStatus: !!status });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ---2---Start--Journey---------
+
+app.post("/start-journey", async (req, res) => {
+  const { username, source, destination, journneyname } = req.body;
+
+  try {
+    // 1. Insert journey data
+    const { data: journeyData, error: journeyError } = await supabase
+      .from("journey")
+      .insert([
+        {
+          username: username,
+          source: source,
+          destination: destination,
+          journeyname: journneyname,
+          spotpins: null, // ignore for now
+        },
+      ]);
+
+    if (journeyError) {
+      return res
+        .status(400)
+        .json({ success: false, message: journeyError.message });
+    }
+
+    // 2. Update user status to true
+    const { data: userData, error: userError } = await supabase
+      .from("users")
+      .update({ status: true })
+      .eq("username", username);
+
+    if (userError) {
+      return res
+        .status(400)
+        .json({ success: false, message: userError.message });
+    }
+
+    return res.json({ success: true, message: "Journey started successfully" });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ----4--Journey-upload--------
+app.post("/journey-upload", async (req, res) => {
+  const { username, spotpins, journneyname } = req.body;
+  const transcribe = 'transcrpt'
+
+  try {
+    const { data, error } = await supabase
+      .from("journey")
+      .update({ spotpins: spotpins, transcribe: transcribe })
+      .eq("username", username)
+      .eq("journeyname", journneyname);
+
+    if (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+
+    return res.json({
+      success: true,
+      message: "Spot pins updated successfully",
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// ---5---Journey-pins--------
+app.post("/return-journey-pins", async (req, res) => {
+  const { username, spotname } = req.body;
+
+  try {
+    const { data, error } = await supabase
+      .from("journey")
+      .select("spotpins, source, destination")
+      .eq("username", username)
+      .eq("journeyname", spotname)
+      .single(); // expecting one match
+
+    if (error) {
+      return res.status(400).json({ success: false, message: error.message });
+    }
+
+    return res.json({
+      success: true,
+      spotpins: data.spotpins,
+      source: data.source,
+      destination: data.destination,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
 // ----------------Server-Kick-Start--------------------
 
