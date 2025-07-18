@@ -1329,7 +1329,7 @@ app.post(
   ]),
   async (req, res) => {
     try {
-      const { username, title, latitude, description, longitude } = req.body;
+      const { username, latitude, longitude } = req.body;
       const audioFile = req.files?.audio?.[0];
       const imageFile = req.files?.image?.[0];
 
@@ -1390,18 +1390,43 @@ app.post(
         .from("journeymap")
         .getPublicUrl(imagePath).data;
 
-      // 5. Create new spot pin
+      // 🧠 5. Transcribe the audio using Whisper
+      const convertedBuffer = await convertAACtoMP3(audioFile.buffer); // assume you have this function
+
+      const whisperForm = new FormData();
+      whisperForm.append("audio", convertedBuffer, {
+        filename: "audio.mp3",
+        contentType: "audio/mpeg",
+      });
+
+      const whisperRes = await axios.post(
+        "http://127.0.0.1:5002/transcribe",
+        whisperForm,
+        { headers: whisperForm.getHeaders() }
+      );
+
+      const transcription = whisperRes.data.text?.trim() || "No caption";
+
+      // ✏️ Generate title and description
+      const title = transcription.split(" ").slice(0, 4).join(" ") + "...";
+      const description =
+        "This place is known for: " +
+        transcription.split(" ").slice(0, 10).join(" ") +
+        "...";
+
+      // 6. Create new spot pin
       const newSpotPin = {
-        title: title || "Untitled Spot",
+        title,
         latitude: parseFloat(latitude),
         longitude: parseFloat(longitude),
         audio_url,
         description,
         image_url,
+        caption: transcription,
         uploaded_at: new Date().toISOString(),
       };
 
-      // 6. Merge and update journey
+      // 7. Merge and update journey
       const updatedSpotpins = Array.isArray(journey.spotpins)
         ? [...journey.spotpins, newSpotPin]
         : [newSpotPin];
