@@ -1329,7 +1329,7 @@ app.post(
   ]),
   async (req, res) => {
     try {
-      const { username, title, latitude, longitude } = req.body;
+      const { username, title, latitude, description, longitude } = req.body;
       const audioFile = req.files?.audio?.[0];
       const imageFile = req.files?.image?.[0];
 
@@ -1396,6 +1396,7 @@ app.post(
         latitude: parseFloat(latitude),
         longitude: parseFloat(longitude),
         audio_url,
+        description,
         image_url,
         uploaded_at: new Date().toISOString(),
       };
