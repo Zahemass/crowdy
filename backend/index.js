@@ -156,6 +156,7 @@ app.post("/login", async (req, res) => {
     .single();
 
   if (error || !user) {
+    console.log(error.message)
     return res.status(400).json({ error: "Invalid username or password" });
   }
 
@@ -342,7 +343,7 @@ app.post(
         description: "More",
         created_at: new Date().toISOString(),
         caption: transcription,
-        transcription,
+        transcription: transcription,
         translated_captions: translatedCaptions,
         summary,
         likes_count: 0,
@@ -384,117 +385,6 @@ app.post(
   }
 );
 
-// ----dummy-route-------
-
-// app.post(
-//   "/spots",
-//   upload.fields([
-//     { name: "audio", maxCount: 1 },
-//     { name: "image", maxCount: 1 },
-//   ]),
-//   async (req, res) => {
-//     try {
-//       if (!req.files?.audio || !req.files?.image) {
-//         return res.status(400).json({ error: "Audio and image are required." });
-//       }
-
-//       const audioFile = req.files.audio[0];
-//       const imageFile = req.files.image[0];
-
-//       const audioPath = `audio/${Date.now()}_${audioFile.originalname}`;
-//       const imagePath = `images/${Date.now()}_${imageFile.originalname}`;
-
-//       // Upload audio to Supabase Storage
-//       await supabase.storage
-//         .from("audiofiles")
-//         .upload(audioPath, audioFile.buffer, {
-//           contentType: audioFile.mimetype,
-//         });
-
-//       // Upload image to Supabase Storage
-//       await supabase.storage
-//         .from("spotimages")
-//         .upload(imagePath, imageFile.buffer, {
-//           contentType: imageFile.mimetype,
-//         });
-
-//       // Get public URLs
-//       const { publicUrl: audio_url } = supabase.storage
-//         .from("audiofiles")
-//         .getPublicUrl(audioPath).data;
-//       const { publicUrl: image } = supabase.storage
-//         .from("spotimages")
-//         .getPublicUrl(imagePath).data;
-
-//       // Extract form data
-//       const {
-//         username,
-//         spotname,
-//         latitude,
-//         longitude,
-//         caption,
-//         transcription,
-//         translated_captions,
-//         summary,
-//         category = "History Whishpers",
-//         description = "More",
-//         original_language = "en",
-//       } = req.body;
-
-//       const lat = parseFloat(latitude);
-//       const lng = parseFloat(longitude);
-
-//       if (isNaN(lat) || isNaN(lng)) {
-//         return res.status(400).json({ error: "Latitude and longitude must be numbers" });
-//       }
-
-//       const insertPayload = {
-//         username,
-//         spotname: spotname?.trim() || "Unnamed Spot",
-//         latitude: lat,
-//         longitude: lng,
-//         original_language,
-//         audio_url,
-//         image,
-//         viewcount: 0,
-//         category,
-//         description,
-//         created_at: new Date().toISOString(),
-//         caption: caption || transcription || "",
-//         transcription: transcription || "",
-//         translated_captions: JSON.parse(translated_captions || "{}"),
-//         summary: summary || "",
-//         likes_count: 0,
-//       };
-
-//       const { data, error } = await supabase
-//         .from("spots")
-//         .insert([insertPayload])
-//         .select()
-//         .single();
-
-//       if (error) {
-//         return res.status(400).json({
-//           error: {
-//             message: error.message,
-//             details: error.details,
-//             hint: error.hint,
-//             code: error.code,
-//           },
-//         });
-//       }
-
-//       res.status(201).json(data);
-//     } catch (err) {
-//       console.error("❌ Spot Upload Error:", err.message);
-//       res.status(500).json({ error: err.message });
-//     }
-//   }
-// );
-
-// ------end--dummy---route---------------------------
-
-// --------------Audio title suggestion-----------------
 
 app.post("/audiotitle", upload.single("audio"), async (req, res) => {
   try {
@@ -962,7 +852,7 @@ app.get("/returnsummary", async (req, res) => {
 
 // ----------------Badges-Update-Route--------------------
 
-app.post("/badges-update", (req, res) => {});
+app.post("/badges-update", (req, res) => { });
 
 // -----------------END_POST_REQUEST--------------------
 
@@ -1355,6 +1245,9 @@ app.post("/area-leaderboard", async (req, res) => {
 
 
 
+
+
+
 // --1----Journey-status--------
 app.post("/journey-status", async (req, res) => {
   const { username } = req.body;
@@ -1424,6 +1317,8 @@ app.post("/start-journey", async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+
 
 // ----4--Journey-upload--------
 app.post(
@@ -1538,6 +1433,9 @@ app.post(
 );
 
 
+
+
+
 // ---5---Journey-pins--------
 app.post("/return-journey-pins", async (req, res) => {
   const { username } = req.body;
@@ -1570,6 +1468,13 @@ app.post("/return-journey-pins", async (req, res) => {
       return res.status(400).json({ success: false, message: "Active journey not found" });
     }
 
+    console.log({
+      success: true,
+      spotpins: journey.spotpins,
+      source: journey.source,
+      destination: journey.destination,
+    });
+
     // 3. Return the journey data
     return res.json({
       success: true,
@@ -1578,11 +1483,15 @@ app.post("/return-journey-pins", async (req, res) => {
       destination: journey.destination,
     });
 
+
   } catch (err) {
     console.error("Error fetching journey pins:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
+
+
+
 
 app.post("/end-journey", async (req, res) => {
   const { username } = req.body;
@@ -1635,6 +1544,12 @@ app.post("/end-journey", async (req, res) => {
       return res.status(500).json({ success: false, message: "Failed to end journey" });
     }
 
+    console.log({
+      success: true,
+      message: "Journey ended and destination saved",
+      destination,
+    });
+
     return res.json({
       success: true,
       message: "Journey ended and destination saved",
@@ -1646,53 +1561,81 @@ app.post("/end-journey", async (req, res) => {
   }
 });
 
+
+
+
+
+
 app.post("/return-profile", async (req, res) => {
   const { username } = req.body;
-
   if (!username) {
     return res.status(400).json({ success: false, message: "Username is required." });
   }
 
+  const cleanUsername = username.trim().toLowerCase();
+  console.log("🔥 /return-profile HIT with username:", cleanUsername);
+
   try {
-    // 1. Fetch user data
-    const { data: user, error: userError } = await supabase
+    // 1. Fetch user with username, postcount, profilepic
+    const { data: user, error: userErr } = await supabase
       .from("users")
-      .select("username, profilepic")
-      .eq("username", username)
+      .select("username, postcount, profilepic")
+      .ilike("username", cleanUsername)
       .single();
 
-    if (userError || !user) {
+    console.log("🧩 Supabase user result:", user, "error:", userErr);
+    if (userErr || !user) {
       return res.status(404).json({ success: false, message: "User not found." });
     }
 
-    // 2. Fetch user's posts
-    const { data: posts, error: postsError } = await supabase
-      .from("posts")
-      .select("image, title, description, summery")
-      .eq("username", username);
+    // 2. Fetch user's spots
+    const { data: spots, error: spotErr } = await supabase
+      .from("spots")
+      .select("id, image, spotname, viewcount, likes_count")
+      .ilike("username", cleanUsername);
 
-    if (postsError) {
-      return res.status(500).json({ success: false, message: "Error fetching posts." });
+    if (spotErr) {
+      return res.status(500).json({ success: false, message: "Error fetching spots." });
     }
 
-    const numberOfPosts = posts.length;
+    const uploaded_spots = spots.map(spot => ({
+      id: spot.id,
+      spotimage: spot.image,
+      title: spot.spotname,
+      viewscount: spot.viewcount,
+      likescount: spot.likes_count,
+    }));
 
-    // 3. Return all the info to the frontend
+    // 3. Fetch user’s badge score
+    const { data: badgeRow, error: badgeErr } = await supabase
+      .from("badges")
+      .select("scores")
+      .ilike("username", cleanUsername)
+      .single();
+
+    if (badgeErr) {
+      return res.status(500).json({ success: false, message: "Error fetching badge." });
+    }
+
+    // 4. Return normalized profile
     return res.json({
       success: true,
-      profile: {
-        username: user.username,
-        profilepic: user.profilepic,
-        numberOfPosts,
-        posts,
-      },
+      username: user.username,
+      profile_image: user.profilepic || null,
+      postcount: user.postcount || 0,
+      score: badgeRow?.scores || 0,
+      uploaded_spots,
     });
-
   } catch (err) {
-    console.error("Error in /return-profile:", err);
+    console.error("❌ Error in /return-profile:", err);
     return res.status(500).json({ success: false, message: "Server error." });
   }
 });
+
+
+
+
+
 
 
 // ----------------------follow-------------------------
@@ -1742,6 +1685,7 @@ app.post("/follow", async (req, res) => {
       })
       .eq("username", follower);
 
+    console.log({ success: true, message: `${follower} now follows ${following}` });
     res.json({ success: true, message: `${follower} now follows ${following}` });
 
   } catch (err) {
@@ -1751,12 +1695,16 @@ app.post("/follow", async (req, res) => {
 });
 
 
+
+
+
+
 // -------------------- UNFOLLOW ---------------------------
 app.post("/unfollow", async (req, res) => {
   const { follower, following } = req.body;
 
   if (!follower || !following || follower === following) {
-    return res.status(400).json({ error: "Invalid request." });
+    console.log({ error: "Invalid request." });
   }
 
   try {
@@ -1773,6 +1721,8 @@ app.post("/unfollow", async (req, res) => {
       .single();
 
     if (!targetUser || !sourceUser) {
+      console.log({ error: "User(s) not found." });
+
       return res.status(404).json({ error: "User(s) not found." });
     }
 
@@ -1796,6 +1746,8 @@ app.post("/unfollow", async (req, res) => {
       })
       .eq("username", follower);
 
+    console.log({ success: true, message: `${follower} unfollowed ${following}` });
+
     res.json({ success: true, message: `${follower} unfollowed ${following}` });
 
   } catch (err) {
@@ -1803,6 +1755,9 @@ app.post("/unfollow", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+
+
 
 
 // -------------------- GET FOLLOWS INFO ---------------------------
@@ -1823,6 +1778,11 @@ app.post("/getfollows-info", async (req, res) => {
     if (error || !user) {
       return res.status(404).json({ error: "User not found." });
     }
+    console.log("response:", username,
+      user.followers_count,
+      user.following_count,
+      user.followers,
+      user.following)
 
     res.json({
       success: true,
@@ -1846,4 +1806,3 @@ app.post("/getfollows-info", async (req, res) => {
 app.listen(process.env.PORT, () =>
   console.log(`API ready → http://localhost:${process.env.PORT}`)
 );
-
