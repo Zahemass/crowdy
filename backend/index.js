@@ -962,7 +962,7 @@ app.get("/returnsummary", async (req, res) => {
 
 // ----------------Badges-Update-Route--------------------
 
-app.post("/badges-update", (req, res) => {});
+app.post("/badges-update", (req, res) => { });
 
 // -----------------END_POST_REQUEST--------------------
 
@@ -1355,6 +1355,9 @@ app.post("/area-leaderboard", async (req, res) => {
 
 
 
+
+
+
 // --1----Journey-status--------
 app.post("/journey-status", async (req, res) => {
   const { username } = req.body;
@@ -1426,23 +1429,24 @@ app.post("/start-journey", async (req, res) => {
 });
 
 // ----4--Journey-upload--------
-
 app.post(
   "/journey-upload",
   upload.fields([
     { name: "audio", maxCount: 1 },
     { name: "image", maxCount: 1 },
+    { name: "memories", maxCount: 10 },
   ]),
   async (req, res) => {
     try {
       const { username, title, latitude, longitude } = req.body;
       const audioFile = req.files?.audio?.[0];
       const imageFile = req.files?.image?.[0];
+      const memoryFiles = req.files?.memories || [];
 
       if (!username || !audioFile || !imageFile) {
         return res
           .status(400)
-          .json({ success: false, message: "Missing fields" });
+          .json({ success: false, message: "Missing required fields" });
       }
 
       // 1. Check user status
@@ -1472,46 +1476,65 @@ app.post(
           .json({ success: false, message: "Active journey not found" });
       }
 
-      // 3. Upload audio and image to Supabase
       const timestamp = Date.now();
-      const audioPath = `spotpins/audio/${timestamp}_${audioFile.originalname}`;
-      const imagePath = `spotpins/images/${timestamp}_${imageFile.originalname}`;
 
+      // 3. Upload audio to journeymap/audio/
+      const audioPath = `audio/${timestamp}_${audioFile.originalname}`;
       await supabase.storage
-        .from("audiofiles")
+        .from("journeymap")
         .upload(audioPath, audioFile.buffer, {
           contentType: audioFile.mimetype,
         });
+      const { publicUrl: audio_url } = supabase.storage
+        .from("journeymap")
+        .getPublicUrl(audioPath).data;
 
+      // 4. Upload image to journeymap/images/
+      const imagePath = `images/${timestamp}_${imageFile.originalname}`;
       await supabase.storage
-        .from("spotimages")
+        .from("journeymap")
         .upload(imagePath, imageFile.buffer, {
           contentType: imageFile.mimetype,
         });
-
-      const { publicUrl: audio_url } = supabase.storage
-        .from("audiofiles")
-        .getPublicUrl(audioPath).data;
       const { publicUrl: image_url } = supabase.storage
-        .from("spotimages")
+        .from("journeymap")
         .getPublicUrl(imagePath).data;
 
-      // 4. Create new spot pin
+      // 5. Upload memory images to journeymap/memories/
+      const memoryUrls = [];
+
+      for (const file of memoryFiles) {
+        const memoryPath = `memories/${timestamp}_${file.originalname}`;
+        const { error: memoryUploadError } = await supabase.storage
+          .from("journeymap")
+          .upload(memoryPath, file.buffer, {
+            contentType: file.mimetype,
+          });
+
+        if (!memoryUploadError) {
+          const { publicUrl } = supabase.storage
+            .from("journeymap")
+            .getPublicUrl(memoryPath).data;
+          memoryUrls.push(publicUrl);
+        }
+      }
+
+      // 6. Create new spot pin
       const newSpotPin = {
         title: title || "Untitled Spot",
         latitude: parseFloat(latitude),
         longitude: parseFloat(longitude),
         audio_url,
         image_url,
+        memories: memoryUrls,
         uploaded_at: new Date().toISOString(),
       };
 
-      // 5. Merge with existing pins
+      // 7. Merge and update journey
       const updatedSpotpins = Array.isArray(journey.spotpins)
         ? [...journey.spotpins, newSpotPin]
         : [newSpotPin];
 
-      // 6. Update the journey record
       const { error: updateError } = await supabase
         .from("journey")
         .update({ spotpins: updatedSpotpins })
@@ -1525,7 +1548,7 @@ app.post(
 
       return res.json({
         success: true,
-        message: "Spot pin added to journey",
+        message: "Spot pin with memories added to journey",
         spotpin: newSpotPin,
       });
     } catch (err) {
@@ -1586,7 +1609,6 @@ app.post("/return-journey-pins", async (req, res) => {
   }
 });
 
-
 app.post("/end-journey", async (req, res) => {
   const { username } = req.body;
 
@@ -1595,36 +1617,36 @@ app.post("/end-journey", async (req, res) => {
   }
 
   try {
-    // 1. Check if user exists and is active
+    // 1. Validate user is active
     const { data: user, error: userError } = await supabase
       .from("users")
       .select("status")
       .eq("username", username)
       .single();
 
-    if (userError || !user || user.status !== true) {
-      return res.status(400).json({ success: false, message: "User not active or not found" });
+    if (userError || !user || user.status != true) {
+      return res.status(403).json({ success: false, message: "User is not active or not found" });
     }
 
-    // 2. Fetch active journey with spotpins
+    // 2. Fetch active journey for the user
     const { data: journey, error: journeyError } = await supabase
       .from("journey")
-      .select("id, status, spotpins")
+      .select("id, spotpins")
       .eq("username", username)
       .eq("status", true)
       .maybeSingle();
 
-    if (journeyError || !journey) {
-      return res.status(400).json({ success: false, message: "Active journey not found" });
+    if (journeyError || !journey?.id) {
+      return res.status(404).json({ success: false, message: "Active journey not found" });
     }
 
-    // 3. Determine destination from last spotpin (store entire last pin)
+    // 3. Extract last spotpin as destination (optional)
     let destination = null;
-    if (journey.spotpins && Array.isArray(journey.spotpins) && journey.spotpins.length > 0) {
+    if (Array.isArray(journey.spotpins) && journey.spotpins.length > 0) {
       destination = journey.spotpins[journey.spotpins.length - 1];
     }
 
-    // 4. Set both statuses to false and update destination in journey
+    // 4. End the journey and deactivate user
     const [{ error: userUpdateError }, { error: journeyUpdateError }] = await Promise.all([
       supabase.from("users").update({ status: false }).eq("username", username),
       supabase
@@ -1634,18 +1656,217 @@ app.post("/end-journey", async (req, res) => {
     ]);
 
     if (userUpdateError || journeyUpdateError) {
+      console.error("❌ Update errors:", userUpdateError, journeyUpdateError);
       return res.status(500).json({ success: false, message: "Failed to end journey" });
     }
 
-    return res.json({ success: true, message: "Journey ended and destination updated successfully" });
-
+    return res.json({
+      success: true,
+      message: "Journey ended and destination saved",
+      destination,
+    });
   } catch (err) {
-    console.error("Error ending journey:", err);
+    console.error("❌ Server error on end-journey:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
+app.post("/return-profile", async (req, res) => {
+  const { username } = req.body;
 
+  if (!username) {
+    return res.status(400).json({ success: false, message: "Username is required." });
+  }
+
+  try {
+    // 1. Fetch user data
+    const { data: user, error: userError } = await supabase
+      .from("users")
+      .select("username, profilepic")
+      .eq("username", username)
+      .single();
+
+    if (userError || !user) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    // 2. Fetch user's posts
+    const { data: posts, error: postsError } = await supabase
+      .from("posts")
+      .select("image, title, description, summery")
+      .eq("username", username);
+
+    if (postsError) {
+      return res.status(500).json({ success: false, message: "Error fetching posts." });
+    }
+
+    const numberOfPosts = posts.length;
+
+    // 3. Return all the info to the frontend
+    return res.json({
+      success: true,
+      profile: {
+        username: user.username,
+        profilepic: user.profilepic,
+        numberOfPosts,
+        posts,
+      },
+    });
+
+  } catch (err) {
+    console.error("Error in /return-profile:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+
+// ----------------------follow-------------------------
+// -------------------- FOLLOW ---------------------------
+app.post("/follow", async (req, res) => {
+  const { follower, following } = req.body;
+
+  if (!follower || !following || follower === following) {
+    return res.status(400).json({ error: "Invalid request." });
+  }
+
+  try {
+    // Fetch both users
+    const { data: targetUser } = await supabase
+      .from("users")
+      .select("followers")
+      .eq("username", following)
+      .single();
+
+    const { data: sourceUser } = await supabase
+      .from("users")
+      .select("following")
+      .eq("username", follower)
+      .single();
+
+    if (!targetUser || !sourceUser) {
+      return res.status(404).json({ error: "User(s) not found." });
+    }
+
+    // Update followers
+    const newFollowers = [...new Set([...(targetUser.followers || []), follower])];
+    await supabase
+      .from("users")
+      .update({
+        followers: newFollowers,
+        followers_count: newFollowers.length,
+      })
+      .eq("username", following);
+
+    // Update following
+    const newFollowing = [...new Set([...(sourceUser.following || []), following])];
+    await supabase
+      .from("users")
+      .update({
+        following: newFollowing,
+        following_count: newFollowing.length,
+      })
+      .eq("username", follower);
+
+    res.json({ success: true, message: `${follower} now follows ${following}` });
+
+  } catch (err) {
+    console.error("Follow error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+
+// -------------------- UNFOLLOW ---------------------------
+app.post("/unfollow", async (req, res) => {
+  const { follower, following } = req.body;
+
+  if (!follower || !following || follower === following) {
+    return res.status(400).json({ error: "Invalid request." });
+  }
+
+  try {
+    const { data: targetUser } = await supabase
+      .from("users")
+      .select("followers")
+      .eq("username", following)
+      .single();
+
+    const { data: sourceUser } = await supabase
+      .from("users")
+      .select("following")
+      .eq("username", follower)
+      .single();
+
+    if (!targetUser || !sourceUser) {
+      return res.status(404).json({ error: "User(s) not found." });
+    }
+
+    // Remove from followers
+    const updatedFollowers = (targetUser.followers || []).filter(u => u !== follower);
+    await supabase
+      .from("users")
+      .update({
+        followers: updatedFollowers,
+        followers_count: updatedFollowers.length,
+      })
+      .eq("username", following);
+
+    // Remove from following
+    const updatedFollowing = (sourceUser.following || []).filter(u => u !== following);
+    await supabase
+      .from("users")
+      .update({
+        following: updatedFollowing,
+        following_count: updatedFollowing.length,
+      })
+      .eq("username", follower);
+
+    res.json({ success: true, message: `${follower} unfollowed ${following}` });
+
+  } catch (err) {
+    console.error("Unfollow error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+
+// -------------------- GET FOLLOWS INFO ---------------------------
+app.post("/getfollows-info", async (req, res) => {
+  const { username } = req.body;
+
+  if (!username) {
+    return res.status(400).json({ error: "Username is required." });
+  }
+
+  try {
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("followers, following, followers_count, following_count")
+      .eq("username", username)
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    res.json({
+      success: true,
+      username,
+      followersCount: user.followers_count || 0,
+      followingCount: user.following_count || 0,
+      followers: user.followers || [],
+      following: user.following || [],
+    });
+
+  } catch (err) {
+    console.error("Get follows error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+
+
+// ----------------Server-Kick-Start--------------------
 
 app.listen(process.env.PORT, () =>
   console.log(`API ready → http://localhost:${process.env.PORT}`)
